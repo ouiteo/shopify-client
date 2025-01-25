@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "shopify-gql-async-client"
+name = "shopify-client"
 version = "1.0.1"
 description = "An async GraphQL client for Shopify API using HTTPX"
 license = "MIT"
@@ -24,13 +24,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-packages = [{ include = "shopify" }]
+packages = [{ include = "shopify_client" }]
 include = ["shopify_client"]
 exclude = ["tests"]
 
 [tool.poetry.dependencies]
 python = ">=3.9"
 httpx = ">=0.13"
+tenacity = "^9.0.0"
+jsonlines = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-httpx = "^0.26.0"
@@ -41,25 +43,35 @@ pytest-cov = "^4.1.0"
 pytest-asyncio = "^0.21.1"
 ruff = "*"                      # linter and code formatter
 
-[tool.black]
-line-length = 120
-target-version = ['py312']
-
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ouiteo/shopify_client/issues"
 "All Releases" = "https://github.com/ouiteo/shopify_client/releases"
 "Latest Release" = "https://github.com/ouiteo/shopify_client/releases/latest"
 "Source" = "https://github.com/ouiteo/shopify_client"
 
-[tool.pytest.ini_options]
-addopts = "--pdbcls=IPython.terminal.debugger:TerminalPdb -p no:warnings --junitxml=.reports/coverage.xml --cov-report=html:.reports/htmlcov --cov shopify_client"
-junit_family = "xunit2"
-norecursedirs = ".git .tox _resource .mypy_cache build dist docs"
+[tool.mypy]
+python_version = "3.12"
+disallow_any_generics = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_untyped_decorators = true
+ignore_errors = false
+ignore_missing_imports = true
+implicit_reexport = false
+strict_optional = true
+strict_equality = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unreachable = true
+warn_no_return = true
+warn_return_any = true
+explicit_package_bases = true
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
 select = [
@@ -76,15 +88,29 @@ known-first-party = ["shopify_client"]
 known-local-folder = ["tests"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 11
+max-complexity = 10
 
-[tool.reports.run]
-omit = ["*/__init__.py", ".tox", ".mypy_cache", ".reports", ".git"]
+[tool.pytest.ini_options]
+addopts = "--pdbcls=IPython.terminal.debugger:TerminalPdb -p no:warnings"
+junit_family = "xunit2"
+norecursedirs = ".git __pycache__ .mypy_cache .pytest_cache .reports _resource"
+asyncio_mode = "auto"
 
-[tool.reports.report]
-omit = ["*/__init__.py", ".tox", ".mypy_cache", ".reports", ".git"]
+[tool.pytest_env]
+CACHE_DIR = "/tmp/fms-cache"
+
+[tool.coverage.report]
+omit = ["*/__init__.py", ".mypy_cache", ".reports"]
 show_missing = true
 
+[tool.coverage.run]
+omit = ["*/__init__.py", ".mypy_cache", ".reports"]
+
+[tool.black]
+line-length = 120
+target-version = ['py312']
+exclude = '(\.git|\.mypy_cache|\.pytest_cache|\.reports|_resource)'
+
 [build-system]
-requires = ["poetry>=0.12"]
-build-backend = "poetry.masonry.api"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

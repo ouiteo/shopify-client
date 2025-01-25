@@ -11,3 +11,5 @@ query currentBulkOperation{
         partialDataUrl
     }
 }
+
+

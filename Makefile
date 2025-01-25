@@ -24,6 +24,7 @@ check: ## Check code quality
 	poetry run ruff check shopify_client tests
 	poetry run mypy shopify_client tests --ignore-missing-imports
 
-test: ## Run the test suite
-	@printf "$(CYAN)Running test suite$(COFF)\n"
-	poetry run pytest
+test:  ## run the test suite, and produce coverage results
+	@printf "$(CYAN)Running tests$(COFF)\n"
+	@mkdir -p .reports
+	@poetry run pytest tests --junitxml=.reports/coverage.xml --cov-report=html:.reports/htmlcov --cov shopify_client --cov-fail-under=33

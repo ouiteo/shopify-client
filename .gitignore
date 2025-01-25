@@ -1,11 +1,7 @@
 *.pyc
 __pycache__
-/env
-/test.py
-/.pytest_cache
-/htmlcov
+.pytest_cache
 /.coverage
-/*.egg-info
-/dist
-/build
-/venv
+.mypy_cache
+.ruff_cache
+.reports
