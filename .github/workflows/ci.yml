@@ -1,0 +1,17 @@
+---
+  name: Build, check and test
+  on:
+    push:
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v3
+        - run: pip install poetry==1.5.1
+        - uses: actions/setup-python@v4
+          with:
+            python-version: "3.12"
+            cache: "poetry"
+        - run: make deps
+        - run: make check
+        - run: make test

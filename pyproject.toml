@@ -1,0 +1,90 @@
+[tool.poetry]
+name = "shopify-gql-async-client"
+version = "1.0.1"
+description = "An async GraphQL client for Shopify API using HTTPX"
+license = "MIT"
+authors = ["Ouiteo <support@ouiteo.com>",]
+maintainers = ["Ouiteo <support@ouiteo.com>"]
+readme = "README.md"
+homepage = "https://github.com/ouiteo/shopify_client"
+repository = "https://github.com/ouiteo/shopify_client"
+documentation = "https://github.com/ouiteo/shopify_client"
+keywords = ["shopify", "async", "httpx", "graphql", "client"]
+classifiers = [
+    "Environment :: Web Environment",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+packages = [{ include = "shopify" }]
+include = ["shopify_client"]
+exclude = ["tests"]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+httpx = ">=0.13"
+
+[tool.poetry.group.dev.dependencies]
+pytest-httpx = "^0.26.0"
+mypy = "^1.6.1"
+ipdb = "^0.13.13"
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+pytest-asyncio = "^0.21.1"
+ruff = "*"                      # linter and code formatter
+
+[tool.black]
+line-length = 120
+target-version = ['py312']
+
+[tool.poetry.urls]
+"Bug Tracker" = "https://github.com/ouiteo/shopify_client/issues"
+"All Releases" = "https://github.com/ouiteo/shopify_client/releases"
+"Latest Release" = "https://github.com/ouiteo/shopify_client/releases/latest"
+"Source" = "https://github.com/ouiteo/shopify_client"
+
+[tool.pytest.ini_options]
+addopts = "--pdbcls=IPython.terminal.debugger:TerminalPdb -p no:warnings --junitxml=.reports/coverage.xml --cov-report=html:.reports/htmlcov --cov shopify_client"
+junit_family = "xunit2"
+norecursedirs = ".git .tox _resource .mypy_cache build dist docs"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # PEP8 errors
+    "W",    # PEP8 warnings
+    "F",    # PyFlakes
+    "I",    # isort
+    "C",    # mccabe
+    "T201", # flake8-print
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["shopify_client"]
+known-local-folder = ["tests"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 11
+
+[tool.reports.run]
+omit = ["*/__init__.py", ".tox", ".mypy_cache", ".reports", ".git"]
+
+[tool.reports.report]
+omit = ["*/__init__.py", ".tox", ".mypy_cache", ".reports", ".git"]
+show_missing = true
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

@@ -1,0 +1,24 @@
+{
+    "data": {
+        "stagedUploadsCreate": {
+            "userErrors": [],
+            "stagedTargets": [
+                {
+                    "url": "https://upload.com",
+                    "parameters": [
+                        {
+                            "name": "key",
+                            "value": "thing"
+                        }
+                    ]
+                }
+            ]
+        },
+        "bulkOperationRunMutation": {
+            "bulkOperation": {
+                "id": "gid://shopify/BulkOperation/1"
+            },
+            "userErrors": []
+        }
+    }
+}
