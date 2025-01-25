@@ -58,16 +58,26 @@ class ShopifyClient:
         return " ".join([x.strip() for x in query.split("\n")])
 
     @staticmethod
-    def pandas_response(response: httpx.Response) -> "pd.DataFrame":
+    async def pandas_response(data_url: Optional[str]) -> "pd.DataFrame":
         try:
             import pandas as pd
         except ImportError:
             raise ImportError("pandas is required for pandas response type")
 
-        return pd.read_json(BytesIO(response.content), lines=True)
+        if not data_url:
+            return pd.DataFrame()
+
+        return pd.read_json(data_url, lines=True)
 
     @staticmethod
-    def jsonlines_response(response: httpx.Response) -> "jsonlines.Reader":
+    async def jsonlines_response(data_url: Optional[str]) -> "jsonlines.Reader":
+        if not data_url:
+            return Reader(BytesIO(b""))
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(data_url)
+            response.raise_for_status()
+
         return Reader(BytesIO(response.content))
 
     @retry(wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type(RetriableException))
@@ -167,19 +177,11 @@ class ShopifyClient:
 
         elif status == "COMPLETED":
             data_url = current_bulk_operation["url"]
-            if data_url:
-                async with httpx.AsyncClient() as client:
-                    download_response = await client.get(data_url)
-                download_response.raise_for_status()
-
-            else:  # data url was None, it means job returned no data
-                download_response = httpx.Response(status_code=204, content=b"")
-
             if response_type == "jsonlines":
-                return self.jsonlines_response(download_response)
+                return await self.jsonlines_response(data_url)
 
             elif response_type == "pandas":
-                return self.pandas_response(download_response)
+                return await self.pandas_response(data_url)
 
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 

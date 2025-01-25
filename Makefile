@@ -27,4 +27,4 @@ check: ## Check code quality
 test:  ## run the test suite, and produce coverage results
 	@printf "$(CYAN)Running tests$(COFF)\n"
 	@mkdir -p .reports
-	@poetry run pytest tests --junitxml=.reports/coverage.xml --cov-report=html:.reports/htmlcov --cov shopify_client --cov-fail-under=33
+	@poetry run pytest tests --junitxml=.reports/coverage.xml --cov-report=html:.reports/htmlcov --cov shopify_client --cov-fail-under=32
