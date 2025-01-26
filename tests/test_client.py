@@ -54,3 +54,15 @@ async def test_run_bulk_operation_mutation_with_error() -> None:
 
 async def test_parse_query() -> None:
     pass
+
+
+async def test_proxy_pass() -> None:
+    pass
+
+
+async def test_generate_redirect_url() -> None:
+    pass
+
+
+async def test_get_permanent_token() -> None:
+    pass

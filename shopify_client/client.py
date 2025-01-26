@@ -6,16 +6,18 @@ from io import BytesIO
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self, Type, cast
+from urllib.parse import urlencode
 
 import httpx
 import jsonlines
+from httpx._types import RequestContent
 from jsonlines import Reader
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .exceptions import QueryError, RetriableException
 
 logger = logging.getLogger(__name__)
-GQL_DIR = Path(__file__).parent.parent / "gql"
+GQL_DIR = Path(__file__).parent / "gql"
 
 retry_on_status = [
     HTTPStatus.TOO_MANY_REQUESTS.value,
@@ -54,6 +56,36 @@ class ShopifyClient:
         await self.session.__aexit__(exc_type, exc_value, traceback)
 
     @staticmethod
+    def generate_redirect_url(client_id: str, scopes: list[str], store: str, state: str, redirect_uri: str) -> str:
+        return f"https://{store}/admin/oauth/authorize?" + urlencode(
+            {
+                "client_id": client_id,
+                "scope": ",".join(scopes),
+                "redirect_uri": redirect_uri,
+                "state": state,
+            }
+        )
+
+    @staticmethod
+    async def get_permanent_token(store: str, code: str, client_id: str, secret: str) -> tuple[str, str]:
+        """
+        Gets a permanent access token for a store
+        """
+        url = f"https://{store}.myshopify.com/admin/oauth/access_token"
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "code": code,
+                "client_id": client_id,
+                "client_secret": secret,
+            }
+            response: httpx.Response = await client.post(url, data=payload)
+
+        response.raise_for_status()
+        data = response.json()
+
+        return data["access_token"], data["scope"]
+
+    @staticmethod
     def parse_query(query: str) -> str:
         return " ".join([x.strip() for x in query.split("\n")])
 
@@ -79,6 +111,21 @@ class ShopifyClient:
             response.raise_for_status()
 
         return Reader(BytesIO(response.content))
+
+    @staticmethod
+    async def proxy_pass(store: str, token: str, method: str, url: str, body: RequestContent) -> httpx.Response:
+        """
+        Proxy requests directly to the Shopify API.
+        """
+        base_url = f"https://{store}.myshopify.com/"
+        client = httpx.AsyncClient(
+            base_url=base_url, headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+        )
+
+        proxy_request = client.build_request(method, url, content=body)
+        response = await client.send(proxy_request, stream=True)
+
+        return response
 
     @retry(wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type(RetriableException))
     async def graphql(self, query: str, variables: dict[str, Any] = {}) -> dict[str, Any]:
