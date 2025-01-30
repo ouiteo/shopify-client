@@ -15,6 +15,7 @@ from jsonlines import Reader
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .exceptions import QueryError, RetriableException
+from .types import ShopifyWebhookSubscription, ShopifyWebhookTopic
 
 logger = logging.getLogger(__name__)
 GQL_DIR = Path(__file__).parent / "gql"
@@ -328,3 +329,15 @@ class ShopifyClient:
             return job_id
 
         return await self.poll_until_complete(job_id, "MUTATION", response_type=return_type)
+
+    async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: ShopifyWebhookSubscription) -> None:
+        """
+        Subscribe customer to the given webhook topic
+        """
+        query = open(GQL_DIR / "webhooks_subscribe.gql").read()
+        query = self.parse_query(query)
+        response = await self.graphql(query, {"topic": topic, "webhookSubscription": subscription})
+
+        user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
+        if user_errors:
+            raise ValueError(user_errors)

@@ -66,3 +66,7 @@ async def test_generate_redirect_url() -> None:
 
 async def test_get_permanent_token() -> None:
     pass
+
+
+async def test_subscribe_to_topic() -> None:
+    pass
