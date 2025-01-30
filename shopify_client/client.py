@@ -337,7 +337,9 @@ class ShopifyClient:
         query = open(GQL_DIR / "webhooks_list.gql").read()
         query = self.parse_query(query)
         response = await self.graphql(query)
-        return response["data"]["webhookSubscriptions"]["edges"]
+        data: list[dict[str, Any]] = response["data"]["webhookSubscriptions"]["edges"]
+
+        return data
 
     async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: ShopifyWebhookSubscription) -> None:
         """
