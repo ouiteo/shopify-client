@@ -1,0 +1,17 @@
+query webhookList {
+    webhookSubscriptions(first: 10) {
+        edges {
+            node {
+                id
+                topic
+                metafieldNamespaces
+                includeFields
+                endpoint {
+                ... on WebhookEventBridgeEndpoint {
+                    arn
+                }
+                }
+            }
+        }
+    }
+}

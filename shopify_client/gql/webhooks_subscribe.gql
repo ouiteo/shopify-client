@@ -1,0 +1,6 @@
+mutation webhookSubscribe($topic: WebhookSubscriptionTopic!, $webhookSubscription: EventBridgeWebhookSubscriptionInput!) {
+    eventBridgeWebhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+        userErrors { field message }
+        webhookSubscription { id }
+    }
+}
