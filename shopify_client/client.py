@@ -32,16 +32,17 @@ if TYPE_CHECKING:
 
 
 class ShopifyClient:
-    def __init__(self, shop_name: str, access_token: str, version: str = "unstable") -> None:
+    def __init__(self, shop_name: str, access_token: str, version: str = "unstable", timeout: float = 5.0) -> None:
         self.shop_name = shop_name
         self.access_token = access_token
         self.base_url = f"https://{shop_name}.myshopify.com/admin/api/{version}/graphql.json"
         self.session = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "X-Shopify-Access-Token": access_token,
-            }
+            },
         )
 
     async def __aenter__(self) -> Self:
