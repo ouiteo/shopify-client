@@ -11,6 +11,12 @@ async def test_graphql_call(mock_shopify_api: dict[str, dict[str, Any]]) -> None
 
     assert response == {"data": {"shop": {"name": "Test Store 1"}}}
 
+    # test client with timeout
+    async with ShopifyClient("test-store", "access-token", timeout=60.0) as client:
+        response = await client.graphql("query shopName{ shop { name } }")
+
+    assert response == {"data": {"shop": {"name": "Test Store 1"}}}
+
 
 async def test_graphql_call_with_pagination() -> None:
     pass
