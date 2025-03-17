@@ -43,6 +43,7 @@ pytest = "^7.4.3"
 pytest-cov = "^4.1.0"
 pytest-asyncio = "^0.21.1"
 ruff = "*"                      # linter and code formatter
+pandas = "^2.2.3"
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ouiteo/shopify_client/issues"
