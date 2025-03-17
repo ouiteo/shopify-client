@@ -1,0 +1,47 @@
+[
+  {
+    "test_name": "simple_query",
+    "entity": "product",
+    "fields": ["id", "title", "handle"],
+    "args": null,
+    "query_type": "query",
+    "expected": "query {\n  product {\n    id\n    title\n    handle\n  }\n}"
+  },
+  {
+    "test_name": "query_with_args",
+    "entity": "orders",
+    "fields": ["id", "totalPrice"],
+    "args": {"first": 100, "query": "\"status:open\""},
+    "query_type": "query", 
+    "expected": "query {\n  orders(\n    first: 100\n    query: \"status:open\"\n  ) {\n    edges {\n      node {\n        id\n        totalPrice\n      }\n    }\n  }\n}"
+  },
+  {
+    "test_name": "nested_fields",
+    "entity": "order",
+    "fields": [
+      "id",
+      {
+        "name": "customer",
+        "fields": ["email", "displayName"]
+      }
+    ],
+    "args": null,
+    "query_type": "query",
+    "expected": "query {\n  order {\n    id\n    customer {\n      email\n      displayName\n    }\n  }\n}"
+  },
+  {
+    "test_name": "nested_fields_with_connection",
+    "entity": "order",
+    "fields": [
+      "id",
+      {
+        "name": "lineItems",
+        "args": {"first": 5},
+        "fields": ["id", "quantity"]
+      }
+    ],
+    "args": null,
+    "query_type": "query",
+    "expected": "query {\n  order {\n    id\n    lineItems(\n      first: 5\n    ) {\n      edges {\n        node {\n          id\n          quantity\n        }\n      }\n    }\n  }\n}"
+  }
+]

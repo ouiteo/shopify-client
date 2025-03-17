@@ -33,6 +33,7 @@ python = ">=3.9"
 httpx = ">=0.13"
 tenacity = "^9.0.0"
 jsonlines = "^4.0.0"
+graphql-query = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-httpx = "^0.26.0"
