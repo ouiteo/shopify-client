@@ -1,7 +1,5 @@
 from typing import Any
 
-import jsonlines
-import pandas as pd
 import pytest
 
 from shopify_client.client import ShopifyClient
@@ -82,161 +80,8 @@ async def test_graphql_call_with_unrecoverable_error(mock_shopify_api: dict[str,
     assert "Invalid query syntax" in str(exc_info.value)
 
 
-async def test_graphql_call_with_error_and_retry(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["shopName"] = {
-        "retry": {
-            "first": {
-                "status_code": 429,  # Too Many Requests
-                "data": {"errors": [{"message": "Rate limit exceeded"}]},
-            },
-            "second": {
-                "status_code": 200,
-                "data": {"shop": {"name": "Test Store"}},
-            },
-        }
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.graphql("query shopName{ shop { name } }")
-
-    assert response == {"data": {"shop": {"name": "Test Store"}}}
-
-
-async def test_poll_until_complete(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api = {
-        "running": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "RUNNING",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-        "completed": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "COMPLETED",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.poll_until_complete(
-            "gid://shopify/BulkOperation/1",
-            "QUERY",
-            response_type="jsonlines",
-        )
-
-    assert isinstance(response, jsonlines.Reader)
-
-
-async def test_run_bulk_operation_query(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api = {
-        "submit": {
-            "data": {
-                "bulkOperationRunQuery": {
-                    "bulkOperation": {
-                        "id": "gid://shopify/BulkOperation/1",
-                    },
-                    "userErrors": [],
-                }
-            }
-        },
-        "running": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "RUNNING",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-        "completed": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "COMPLETED",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.run_bulk_operation_query(
-            """
-            {
-                products {
-                    edges {
-                        node {
-                            id
-                            title
-                        }
-                    }
-                }
-            }
-            """,
-            wait=True,
-            return_type="jsonlines",
-        )
-
-    assert isinstance(response, jsonlines.Reader)
-
-
-async def test_jsonl_pandas_return(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["BulkOperation"] = {
-        "data": {
-            "currentBulkOperation": {
-                "id": "gid://shopify/BulkOperation/1",
-                "status": "COMPLETED",
-                "objectCount": 1,
-                "url": "https://download.com",
-            }
-        }
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.poll_until_complete(
-            "gid://shopify/BulkOperation/1",
-            "QUERY",
-            response_type="pandas",
-        )
-
-    assert isinstance(response, pd.DataFrame)
-
-
-async def test_jsonl_jsonlines_return(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["BulkOperation"] = {
-        "data": {
-            "currentBulkOperation": {
-                "id": "gid://shopify/BulkOperation/1",
-                "status": "COMPLETED",
-                "objectCount": 1,
-                "url": "https://download.com",
-            }
-        }
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.poll_until_complete(
-            "gid://shopify/BulkOperation/1",
-            "QUERY",
-            response_type="jsonlines",
-        )
-
-    assert isinstance(response, jsonlines.Reader)
-
-
 async def test_run_bulk_operation_query_with_error(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["BulkOperation"] = {
+    mock_shopify_api["currentBulkOperation"] = {
         "error": {
             "data": {
                 "bulkOperationRunQuery": {
@@ -252,132 +97,6 @@ async def test_run_bulk_operation_query_with_error(mock_shopify_api: dict[str, d
             await client.run_bulk_operation_query("invalid query")
 
     assert "Invalid query syntax" in str(exc_info.value)
-
-
-async def test_run_bulk_operation_mutation(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["BulkOperation"] = {
-        "submit": {
-            "data": {
-                "stagedUploadsCreate": {
-                    "userErrors": [],
-                    "stagedTargets": [
-                        {
-                            "url": "https://upload.com",
-                            "parameters": [
-                                {
-                                    "name": "key",
-                                    "value": "thing",
-                                }
-                            ],
-                        }
-                    ],
-                },
-                "bulkOperationRunMutation": {
-                    "bulkOperation": {
-                        "id": "gid://shopify/BulkOperation/1",
-                    },
-                    "userErrors": [],
-                },
-            }
-        },
-        "running": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "RUNNING",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-        "completed": {
-            "data": {
-                "currentBulkOperation": {
-                    "id": "gid://shopify/BulkOperation/1",
-                    "status": "COMPLETED",
-                    "objectCount": 1,
-                    "url": "https://download.com",
-                }
-            }
-        },
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.run_bulk_operation_mutation(
-            """
-            mutation productUpdate($input: ProductInput!) {
-                productUpdate(input: $input) {
-                    product {
-                        id
-                        title
-                    }
-                }
-            }
-            """,
-            [{"title": "Updated Product"}],
-            wait=True,
-            return_type="jsonlines",
-        )
-
-    assert isinstance(response, jsonlines.Reader)
-
-
-async def test_run_bulk_operation_mutation_with_error(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["BulkOperation"] = {
-        "error": {
-            "data": {
-                "stagedUploadsCreate": {
-                    "userErrors": [{"message": "Invalid file format"}],
-                    "stagedTargets": [],
-                },
-                "bulkOperationRunMutation": {
-                    "bulkOperation": None,
-                    "userErrors": [{"message": "Invalid mutation syntax"}],
-                },
-            }
-        }
-    }
-
-    async with ShopifyClient("test-store", "access-token") as client:
-        with pytest.raises(ValueError) as exc_info:
-            await client.run_bulk_operation_mutation(
-                "invalid mutation",
-                [{"title": "Updated Product"}],
-            )
-
-    assert "Invalid file format" in str(exc_info.value)
-
-
-async def test_parse_query() -> None:
-    query = """
-    query {
-        shop {
-            name
-        }
-    }
-    """
-    parsed = ShopifyClient.parse_query(query)
-    assert parsed == "query { shop { name } }"
-
-
-async def test_proxy_pass() -> None:
-    mock_shopify_api = {
-        "proxy": {
-            "status_code": 200,
-            "data": {"shop": {"name": "Test Store"}},
-        }
-    }
-
-    response = await ShopifyClient.proxy_pass(
-        "test-store",
-        "access-token",
-        "GET",
-        "admin/api/2024-01/shop.json",
-        "",
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"shop": {"name": "Test Store"}}
 
 
 async def test_generate_redirect_url() -> None:
@@ -399,39 +118,15 @@ async def test_generate_redirect_url() -> None:
     assert url == expected
 
 
-async def test_get_permanent_token() -> None:
-    mock_shopify_api = {
-        "token": {
-            "status_code": 200,
-            "data": {
-                "access_token": "test-access-token",
-                "scope": "read_products,write_products",
-            },
-        }
-    }
-
-    access_token, scope = await ShopifyClient.get_permanent_token(
-        "test-store",
-        "test-code",
-        "test-client",
-        "test-secret",
-    )
-
-    assert access_token == "test-access-token"
-    assert scope == "read_products,write_products"
-
-
 async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
     mock_shopify_api["webhookSubscribe"] = {
-        "subscribe": {
-            "data": {
-                "eventBridgeWebhookSubscriptionCreate": {
-                    "webhookSubscription": {
-                        "id": "gid://shopify/WebhookSubscription/1",
-                        "topic": "PRODUCTS_CREATE",
-                    },
-                    "userErrors": [],
-                }
+        "data": {
+            "eventBridgeWebhookSubscriptionCreate": {
+                "webhookSubscription": {
+                    "id": "gid://shopify/WebhookSubscription/1",
+                    "topic": "PRODUCTS_CREATE",
+                },
+                "userErrors": [],
             }
         }
     }

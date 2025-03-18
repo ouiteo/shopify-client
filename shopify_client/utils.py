@@ -1,10 +1,7 @@
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pandas as pd
-
-    Row = dict[str, Any]
+Row = dict[str, Any]
 
 
 def get_error_codes(data: dict[str, Any]) -> set[str]:
@@ -17,11 +14,20 @@ def get_error_codes(data: dict[str, Any]) -> set[str]:
     return codes
 
 
-def graphql_to_pandas(data: list[Row]) -> dict[str, "pd.DataFrame"]:
+def graphql_to_pandas(data: list[Row]) -> dict[str, Any]:
     """
     convert data into a dictionary of entities, keyed on entity name,
     ensuring each child entity has its parents id as a __parentId key
+
+    e.g
+
+    client = ShopifyClient("test-store", "test-token")
+    query = str(ShopifyQuery("products", ["id", "title", "handle"], args={"first": 250}))
+    data = await client.graphql_call_with_pagination("products", "query { products { id, title } }")
+    df = graphql_to_pandas(data)
     """
+    import pandas as pd
+
     datasets = defaultdict(list)
     for item in data:
         item_copy = item.copy()
@@ -38,11 +44,12 @@ def graphql_to_pandas(data: list[Row]) -> dict[str, "pd.DataFrame"]:
     return {k: pd.DataFrame(v) for k, v in datasets.items()}
 
 
-def normalise_jsonl(df: "pd.DataFrame") -> dict[str, "pd.DataFrame"]:
+def normalise_jsonl(df: Any) -> dict[str, Any]:
     """
     normalise jsonl data into a dictionary of entities, keyed on entity name,
     ensuring each child entity has its parents id as a __parentId key
     """
+
     datasets = {}
     if "__parentId" in df.columns:
         parent_df = df[df["__parentId"].isna()].dropna(axis=1, how="all")

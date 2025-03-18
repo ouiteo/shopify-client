@@ -1,19 +1,16 @@
 import asyncio
 import logging
-import uuid
 from http import HTTPStatus
-from io import BytesIO
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, Optional, Self, Type, cast
+from typing import Any, Optional, Self, Type, cast
 from urllib.parse import urlencode
 
 import httpx
-import jsonlines
 from httpx._types import RequestContent
-from jsonlines import Reader
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
+from .builder import ShopifyQuery
 from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
 from .types import ShopifyWebhookSubscription, ShopifyWebhookTopic
 from .utils import get_error_codes
@@ -27,9 +24,6 @@ retry_on_status = [
     HTTPStatus.SERVICE_UNAVAILABLE.value,
     HTTPStatus.GATEWAY_TIMEOUT.value,
 ]
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 
 class ShopifyClient:
@@ -93,29 +87,6 @@ class ShopifyClient:
         return " ".join([x.strip() for x in query.split("\n")])
 
     @staticmethod
-    async def pandas_response(data_url: Optional[str]) -> "pd.DataFrame":
-        try:
-            import pandas as pd
-        except ImportError:
-            raise ImportError("pandas is required for pandas response type")
-
-        if not data_url:
-            return pd.DataFrame()
-
-        return pd.read_json(data_url, lines=True)
-
-    @staticmethod
-    async def jsonlines_response(data_url: Optional[str]) -> "jsonlines.Reader":
-        if not data_url:
-            return Reader(BytesIO(b""))
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(data_url)
-            response.raise_for_status()
-
-        return Reader(BytesIO(response.content))
-
-    @staticmethod
     async def proxy_pass(store: str, token: str, method: str, url: str, body: RequestContent) -> httpx.Response:
         """
         Proxy requests directly to the Shopify API.
@@ -131,8 +102,26 @@ class ShopifyClient:
         return response
 
     @retry(wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type(RetriableException))
-    async def graphql(self, query: str, variables: dict[str, Any] = {}) -> dict[str, Any]:
-        json_data = {"query": query, "variables": variables}
+    async def graphql(self, query: ShopifyQuery, variables: dict[str, Any] = {}) -> dict[str, Any]:
+        """
+        Execute a GraphQL query against the Shopify API.
+
+        Args:
+            query: A ShopifyQuery instance that defines the query structure
+            variables: Variables to pass to the query
+
+        Returns:
+            The parsed JSON response from the API
+
+        Raises:
+            QueryError: If the query contains errors
+            RetriableException: If the request should be retried due to temporary issues
+
+        Example:
+            >>> builder = ShopifyQuery("shop", ["name"])
+            >>> response = await client.graphql(builder)
+        """
+        json_data = {"query": str(query), "variables": variables}
         response = await self.session.post(self.base_url, json=json_data)
         if response.status_code in retry_on_status:
             raise RetriableException(f"retrying http {response.status_code}")
@@ -149,41 +138,48 @@ class ShopifyClient:
         return data
 
     async def graphql_call_with_pagination(
-        self, entity: str, query: str, variables: dict[str, Any] = {}, max_limit: int | None = None
+        self, query: ShopifyQuery, variables: dict[str, Any] = {}, max_limit: int | None = None
     ) -> list[dict[str, Any]] | None:
         """
-        Make a graphql query with pagination
+        Make a graphql query with pagination using a ShopifyQuery instance.
 
-        :param entity: The entity to fetch, e.g "products", "orders"
-        :param query: The query to run
-        :param variables: The variables to pass to the query
+        Args:
+            query: The ShopifyQuery instance that defines the query structure
+            variables: The variables to pass to the query
+            max_limit: Maximum number of items to return
 
-        :return: A list of entity data
+        Returns:
+            A list of entity data, or None if no data is found
+
+        Example:
+            >>> builder = ShopifyQuery("products", ["id", "title", "handle"], args={"first": 250})
+            >>> data = await client.graphql_call_with_pagination(builder)
         """
         has_next_page = True
         end_cursor: str | None = None
         data = []
 
-        query = self.parse_query(query)
+        # Ensure the query includes pagination fields
+        if not any(field == "pageInfo" for field in query.fields):
+            query.fields.append("pageInfo")
+        if not any(field == "edges" for field in query.fields):
+            query.fields.append("edges")
 
         while has_next_page:
             variables["cursor"] = end_cursor
-
             response = await self.graphql(query, variables)
-            entity_path = entity.split(".")
-            entity_data = response.get("data", {})
 
-            for key in entity_path:
-                entity_data = entity_data.get(key, {})
-                if not entity_data:
-                    return None
+            # Navigate to the entity data
+            entity_data = response.get("data", {}).get(query.entity, {})
+            if not entity_data:
+                return None
 
             page_info = entity_data.get("pageInfo", {})
-
             has_next_page = page_info.get("hasNextPage", False)
             end_cursor = page_info.get("endCursor", None)
             entity_data.pop("pageInfo", None)
 
+            # Extract node data from edges
             for edge in entity_data.get("edges", []):
                 data.append(edge.get("node", {}))
 
@@ -197,8 +193,21 @@ class ShopifyClient:
         Check if a bulk operation is running
         job_type: "QUERY" or "MUTATION"
         """
-        query = open(GQL_DIR / "current_bulkoperation.gql").read() % {"job_type": job_type}
-        query = self.parse_query(query)
+        query = ShopifyQuery(
+            "currentBulkOperation",
+            [
+                "id",
+                "status",
+                "errorCode",
+                "createdAt",
+                "completedAt",
+                "objectCount",
+                "fileSize",
+                "url",
+                "partialDataUrl",
+            ],
+            args={"type": job_type},
+        )
         response = await self.graphql(query)
         current_bulk_operation = response["data"]["currentBulkOperation"]
         if current_bulk_operation is not None and current_bulk_operation["status"] in ["CREATED", "RUNNING"]:
@@ -206,14 +215,25 @@ class ShopifyClient:
 
         return False
 
-    async def poll_until_complete(
-        self, job_id: str, job_type: str, response_type: Literal["jsonlines", "pandas"] = "jsonlines"
-    ) -> "Reader | pd.DataFrame":
+    async def poll_until_complete(self, job_id: str, job_type: str) -> str | None:
         """
         Poll the bulk operation until it is complete, then return the dataframe
         """
-        query = open(GQL_DIR / "current_bulkoperation.gql").read() % {"job_type": job_type}
-        query = self.parse_query(query)
+        query = ShopifyQuery(
+            "currentBulkOperation",
+            [
+                "id",
+                "status",
+                "errorCode",
+                "createdAt",
+                "completedAt",
+                "objectCount",
+                "fileSize",
+                "url",
+                "partialDataUrl",
+            ],
+            args={"type": job_type},
+        )
         bulk_check_response = await self.graphql(query)
 
         current_bulk_operation = bulk_check_response["data"]["currentBulkOperation"]
@@ -229,30 +249,23 @@ class ShopifyClient:
             return await self.poll_until_complete(job_id, job_type)
 
         elif status == "COMPLETED":
-            data_url = current_bulk_operation["url"]
-            if response_type == "jsonlines":
-                return await self.jsonlines_response(data_url)
-
-            elif response_type == "pandas":
-                return await self.pandas_response(data_url)
+            return cast(str | None, current_bulk_operation["url"])
 
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 
     async def run_bulk_operation_query(
-        self,
-        sub_query: str,
-        variables: dict[str, Any] = {},
-        wait: bool = True,
-        return_type: Literal["jsonlines", "pandas"] = "jsonlines",
-    ) -> "str | jsonlines.Reader | pd.DataFrame":
+        self, sub_query: str, variables: dict[str, Any] = {}, wait: bool = True
+    ) -> str | None:
         # check if any bulk query job in progress currently
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
         if is_job_running:
             raise BulkQueryInProgress("Bulk query job already running")
 
-        query = open(GQL_DIR / "query_bulkoperation.gql").read() % {"sub_query": sub_query}
-
-        query = self.parse_query(query)
+        query = ShopifyQuery(
+            "bulkOperationRunQuery",
+            ["bulkOperation { id status }", "userErrors { field message }"],
+            args={"query": sub_query},
+        )
         response = await self.graphql(query, variables)
 
         user_errors = response["data"]["bulkOperationRunQuery"]["userErrors"]
@@ -261,99 +274,66 @@ class ShopifyClient:
 
         job_id: str = response["data"]["bulkOperationRunQuery"]["bulkOperation"]["id"]
         if wait:
-            return await self.poll_until_complete(job_id, "QUERY", response_type=return_type)
+            return await self.poll_until_complete(job_id, "QUERY")
 
         return job_id
 
     async def run_bulk_operation_mutation(
-        self,
-        query: str,
-        rows: list[dict[str, Any]],
-        key: str | None = "input",
-        wait: bool = True,
-        return_type: Literal["jsonlines", "pandas"] = "jsonlines",
-    ) -> "str | jsonlines.Reader | pd.DataFrame":
-        """
-        Run a GQL mutation in bulk
+        self, sub_query: ShopifyQuery, variables: dict[str, Any] = {}, wait: bool = True
+    ) -> str | None:
+        # check if any bulk mutation job in progress currently
+        is_job_running = await self.is_bulk_job_running(job_type="MUTATION")
+        if is_job_running:
+            raise ValueError("Bulk mutation job already running")
 
-        Supported operations: https://shopify.dev/docs/api/usage/bulk-operations/imports#limitations
-        rows are expected to have ONLY the fields that you wish to change.
-        """
-        filename = f"{uuid.uuid4()}.jsonl"
-        stage_mutation_query = open(GQL_DIR / "mutation_upload_bulkoperation.gql").read() % {"filename": filename}
-
-        ###################
-        # Stage Mutations #
-        ###################
-        # Get the upload parameters for our mutation file
-        stage_mutation_query = self.parse_query(stage_mutation_query)
-        stage_mutations_response = await self.graphql(stage_mutation_query)
-
-        stage_mutations_data = stage_mutations_response["data"]["stagedUploadsCreate"]["stagedTargets"][0]
-        mutations_upload_url = stage_mutations_data["url"]
-        mutations_upload_params = stage_mutations_data["parameters"]
-
-        ####################
-        # Upload Mutations #
-        ####################
-        if key is not None:
-            rows = [{key: row} for row in rows]
-
-        fp = BytesIO()
-        writer = jsonlines.Writer(fp)
-        writer.write_all(rows)
-        fp.seek(0)
-
-        files = {"file": (filename, fp, "application/octet-stream")}
-        data = {param["name"]: (param["value"],) for param in mutations_upload_params}
-        staged_upload_path = data["key"][0]
-
-        async with httpx.AsyncClient() as client:
-            mutations_upload_response = await client.post(mutations_upload_url, data=data, files=files)
-
-        mutations_upload_response.raise_for_status()
-
-        ######################
-        # Run Bulk Operation #
-        ######################
-        bulk_mutation_query = open(GQL_DIR / "mutation_bulkoperation.gql").read() % {
-            "mutation_query": query,
-            "staged_upload_path": staged_upload_path,
-        }
-
-        # Perform the bulk mutation, and wait for its response
-        bulk_mutation_query = self.parse_query(bulk_mutation_query)
-        response = await self.graphql(bulk_mutation_query)
+        query = ShopifyQuery(
+            entity="bulkOperationRunMutation",
+            fields=[
+                {"name": "bulkOperation", "fields": ["id", "status"]},
+                {"name": "userErrors", "fields": ["field", "message"]},
+            ],
+            args={"mutation": str(sub_query)},
+            query_type="mutation",
+        )
+        response = await self.graphql(query, variables)
 
         user_errors = response["data"]["bulkOperationRunMutation"]["userErrors"]
         if user_errors:
-            raise ValueError(user_errors)
+            raise QueryError(user_errors)
 
         job_id: str = response["data"]["bulkOperationRunMutation"]["bulkOperation"]["id"]
-        if not wait:
-            return job_id
+        if wait:
+            return await self.poll_until_complete(job_id, "MUTATION")
 
-        return await self.poll_until_complete(job_id, "MUTATION", response_type=return_type)
+        return job_id
 
     async def get_webhook_subscriptions(self) -> list[dict[str, Any]]:
         """
         Get all webhook subscriptions
         """
-        query = open(GQL_DIR / "webhooks_list.gql").read()
-        query = self.parse_query(query)
+        query = ShopifyQuery(
+            "webhookSubscriptions",
+            [
+                "edges { node { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } ... on WebhookEventBridgeEndpoint { arn } } } }"
+            ],
+            args={"first": 250},
+        )
         response = await self.graphql(query)
-        data: list[dict[str, Any]] = response["data"]["webhookSubscriptions"]["edges"]
-
-        return data
+        return [edge["node"] for edge in response["data"]["webhookSubscriptions"]["edges"]]
 
     async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: ShopifyWebhookSubscription) -> None:
         """
-        Subscribe customer to the given webhook topic
+        Subscribe to a webhook topic
         """
-        query = open(GQL_DIR / "webhooks_subscribe.gql").read()
-        query = self.parse_query(query)
-        response = await self.graphql(query, {"topic": topic.name, "webhookSubscription": subscription})
-
-        user_errors = response["data"]["eventBridgeWebhookSubscriptionCreate"]["userErrors"]
+        query = ShopifyQuery(
+            "webhookSubscriptionCreate",
+            [
+                "webhookSubscription { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } ... on WebhookEventBridgeEndpoint { arn } } }",
+                "userErrors { field message }",
+            ],
+            args={"topic": topic, "webhookSubscription": subscription},
+        )
+        response = await self.graphql(query)
+        user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
         if user_errors:
-            raise ValueError(user_errors)
+            raise QueryError(user_errors)

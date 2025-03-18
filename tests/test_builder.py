@@ -3,7 +3,7 @@ from typing import Any, Literal
 import pytest
 from typing_extensions import TypedDict
 
-from shopify_client.builder import ShopifyQueryBuilder
+from shopify_client.builder import ShopifyQuery
 
 from tests.conftest import json_fixture
 
@@ -25,7 +25,7 @@ def test_query_builder(test_case: QueryTestCase) -> None:
     mutations, and different argument types.
     """
     query = str(
-        ShopifyQueryBuilder(
+        ShopifyQuery(
             entity=test_case["entity"],
             fields=test_case["fields"],
             args=test_case["args"],
