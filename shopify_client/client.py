@@ -14,8 +14,9 @@ from httpx._types import RequestContent
 from jsonlines import Reader
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
-from .exceptions import QueryError, RetriableException
+from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
 from .types import ShopifyWebhookSubscription, ShopifyWebhookTopic
+from .utils import get_error_codes
 
 logger = logging.getLogger(__name__)
 GQL_DIR = Path(__file__).parent / "gql"
@@ -139,7 +140,10 @@ class ShopifyClient:
         response.raise_for_status()
         data = cast(dict[str, Any], response.json())
 
-        if data.get("errors") or data.get("error"):
+        error_codes = get_error_codes(data)
+        if error_codes:
+            if "THROTTLED" in error_codes:
+                raise ThrottledException(data.get("errors") or data.get("error"))
             raise QueryError(data.get("errors") or data.get("error"))
 
         return data
@@ -244,7 +248,7 @@ class ShopifyClient:
         # check if any bulk query job in progress currently
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
         if is_job_running:
-            raise ValueError("Bulk query job already running")
+            raise BulkQueryInProgress("Bulk query job already running")
 
         query = open(GQL_DIR / "query_bulkoperation.gql").read() % {"sub_query": sub_query}
 
