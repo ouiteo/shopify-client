@@ -4,3 +4,11 @@ class QueryError(Exception):
 
 class RetriableException(Exception):
     pass
+
+
+class BulkQueryInProgress(Exception):
+    pass
+
+
+class ThrottledException(RetriableException):
+    pass
