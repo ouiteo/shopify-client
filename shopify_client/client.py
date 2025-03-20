@@ -254,7 +254,7 @@ class ShopifyClient:
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 
     async def run_bulk_operation_query(
-        self, sub_query: str, variables: dict[str, Any] = {}, wait: bool = True
+        self, sub_query: ShopifyQuery, variables: dict[str, Any] = {}, wait: bool = True
     ) -> str | None:
         # check if any bulk query job in progress currently
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
@@ -263,8 +263,11 @@ class ShopifyClient:
 
         query = ShopifyQuery(
             "bulkOperationRunQuery",
-            ["bulkOperation { id status }", "userErrors { field message }"],
-            args={"query": sub_query},
+            [
+                {"name": "bulkOperation", "fields": ["id", "status"]},
+                {"name": "userErrors", "fields": ["field", "message"]},
+            ],
+            args={"query": str(sub_query)},
         )
         response = await self.graphql(query, variables)
 
@@ -312,9 +315,17 @@ class ShopifyClient:
         Get all webhook subscriptions
         """
         query = ShopifyQuery(
-            "webhookSubscriptions",
-            [
-                "edges { node { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } ... on WebhookEventBridgeEndpoint { arn } } } }"
+            entity="webhookSubscriptions",
+            fields=[
+                "id",
+                "topic",
+                {
+                    "name": "endpoint",
+                    "fields": [
+                        {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
+                        {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
+                    ],
+                },
             ],
             args={"first": 250},
         )
@@ -326,14 +337,28 @@ class ShopifyClient:
         Subscribe to a webhook topic
         """
         query = ShopifyQuery(
-            "webhookSubscriptionCreate",
-            [
-                "webhookSubscription { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } ... on WebhookEventBridgeEndpoint { arn } } }",
-                "userErrors { field message }",
+            entity="webhookSubscriptionCreate",
+            fields=[
+                {
+                    "name": "webhookSubscription",
+                    "fields": [
+                        "id",
+                        "topic",
+                        {
+                            "name": "endpoint",
+                            "fields": [
+                                {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
+                                {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
+                            ],
+                        },
+                    ],
+                },
+                {"name": "userErrors", "fields": ["field", "message"]},
             ],
-            args={"topic": topic, "webhookSubscription": subscription},
+            args={"topic": "WebhookSubscriptionTopic!", "webhookSubscription": "WebhookSubscriptionInput!"},
+            query_type="mutation",
         )
-        response = await self.graphql(query)
+        response = await self.graphql(query, variables={"topic": topic.value, "webhookSubscription": subscription})
         user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
         if user_errors:
             raise QueryError(user_errors)

@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 
+from shopify_client.builder import ShopifyQuery
 from shopify_client.client import ShopifyClient
 from shopify_client.exceptions import QueryError
 from shopify_client.types import ShopifyWebhookSubscription, ShopifyWebhookTopic
@@ -10,14 +11,16 @@ from shopify_client.types import ShopifyWebhookSubscription, ShopifyWebhookTopic
 async def test_basic_graphql_call(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
     mock_shopify_api["shopName"] = {"data": {"shop": {"name": "Test Store 1"}}}
 
+    query = ShopifyQuery("shop", ["name"])
+
     async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.graphql("query shopName{ shop { name } }")
+        response = await client.graphql(query)
 
     assert response == {"data": {"shop": {"name": "Test Store 1"}}}
 
     # test client with timeout
     async with ShopifyClient("test-store", "access-token", timeout=60.0) as client:
-        response = await client.graphql("query shopName{ shop { name } }")
+        response = await client.graphql(query)
 
     assert response == {"data": {"shop": {"name": "Test Store 1"}}}
 
@@ -38,26 +41,10 @@ async def test_graphql_call_with_pagination(mock_shopify_api: dict[str, dict[str
         }
     }
 
+    query = ShopifyQuery("products", ["id", "title", {"name": "pageInfo", "fields": ["hasNextPage", "endCursor"]}])
+
     async with ShopifyClient("test-store", "access-token") as client:
-        response = await client.graphql_call_with_pagination(
-            "products",
-            """
-            query GetProducts{
-                products {
-                    edges {
-                        node {
-                            id
-                            title
-                        }
-                    }
-                    pageInfo {
-                        hasNextPage
-                        endCursor
-                    }
-                }
-            }
-            """,
-        )
+        response = await client.graphql_call_with_pagination(query)
 
     assert response == [
         {"id": "1", "title": "Product 1"},
@@ -73,9 +60,11 @@ async def test_graphql_call_with_unrecoverable_error(mock_shopify_api: dict[str,
         }
     }
 
+    query = ShopifyQuery("shop", ["name"])
+
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(QueryError) as exc_info:
-            await client.graphql("query shopName{ shop { name } }")
+            await client.graphql(query)
 
     assert "Invalid query syntax" in str(exc_info.value)
 
@@ -92,9 +81,11 @@ async def test_run_bulk_operation_query_with_error(mock_shopify_api: dict[str, d
         }
     }
 
+    query = ShopifyQuery("bulkOperationRunQuery", ["userErrors"])
+
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(QueryError) as exc_info:
-            await client.run_bulk_operation_query("invalid query")
+            await client.run_bulk_operation_query(query)
 
     assert "Invalid query syntax" in str(exc_info.value)
 
