@@ -30,5 +30,5 @@
         }
     },
     "postCreateCommand": "poetry install",
-    "remoteUser": "vscode"
-} 
+    "remoteUser": "root"
+}
