@@ -151,7 +151,7 @@ class ShopifyWebhookTopic(StrEnum):
     VARIANTS_OUT_OF_STOCK = "VARIANTS_OUT_OF_STOCK"
 
 
-class ShopifyWebhookSubscription(TypedDict):
+class WebhookSubscriptionInput(TypedDict):
     arn: str
     format: Literal["JSON"]
     filter: NotRequired[str]

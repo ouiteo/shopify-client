@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Literal, Union
+from typing import Any, Literal, Optional, Union
 
 from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query
 
@@ -45,26 +45,50 @@ class ShopifyQuery:
 
     def __init__(
         self,
+        operation_name: str,
         entity: str,
         fields: list[Union[str, dict[str, Any]]],
-        *,
         args: dict[str, Any] | None = None,
         query_type: Literal["query", "mutation"] = "query",
+        variables: Optional[dict[str, dict[str, str]]] = None,
     ) -> None:
         """
         Build a Shopify GraphQL query.
 
         Args:
+            operation_name: Name of the operation (required)
             entity: The Shopify entity to query (e.g., "orders", "product")
             fields: List of fields to request. Can be simple strings or nested field objects.
                    For nested fields, use a dict with 'name', 'fields', and optional 'args' keys.
-            args: Arguments to pass to the top-level query (e.g., {"first": 100, "query": "status:open"})
+            args: Arguments to pass to the top-level query
             query_type: Type of query ("query" or "mutation")
+            variables: Variable definitions in the format:
+                      {"variableName": {"type": "Type!", "value": "$variableName"}}
+
+        Examples:
+            >>> # Simple named query
+            >>> query = ShopifyQuery(
+            ...     "getProduct",
+            ...     "product",
+            ...     ["id", "title", "handle"]
+            ... )
+
+            >>> # Named mutation with variables
+            >>> mutation = ShopifyQuery(
+            ...     "createWebhook",
+            ...     "webhookSubscriptionCreate",
+            ...     [...],
+            ...     args={"topic": "$topic"},
+            ...     query_type="mutation",
+            ...     variables={"topic": {"type": "WebhookSubscriptionTopic!"}}
+            ... )
         """
+        self.operation_name = operation_name
         self.entity = entity
         self.fields = fields
         self.args = args
         self.query_type = query_type
+        self.variables = variables
 
     @staticmethod
     def _wrap_in_connection(fields: list[str | Field | InlineFragment | Fragment]) -> Field:
@@ -89,12 +113,22 @@ class ShopifyQuery:
 
         return Field(name=field_name, arguments=args, fields=nested_fields if nested_fields else [])
 
+    def _format_variable_definitions(self) -> str:
+        """Format variable definitions for the query"""
+        if not self.variables:
+            return ""
+
+        var_defs = [f"${name}: {details['type']}" for name, details in self.variables.items()]
+        return f"({', '.join(var_defs)})"
+
     def __repr__(self) -> str:
         return f"""ShopifyQuery(
             entity={self.entity},
             fields={self.fields},
             args={self.args},
-            query_type={self.query_type}
+            query_type={self.query_type},
+            operation_name={self.operation_name},
+            variables={self.variables}
         )"""
 
     def __str__(self) -> str:
@@ -105,7 +139,9 @@ class ShopifyQuery:
         processed_fields = [self._build_field(field) for field in self.fields]
 
         # Add arguments for the entity
-        entity_args = [Argument(name=key, value=value) for key, value in (self.args or {}).items()]
+        entity_args = []
+        if self.args:
+            entity_args = [Argument(name=key, value=value.get("value", value)) for key, value in self.args.items()]
 
         # Wrap in connection structure if it's a plural entity
         if self.entity.endswith("s"):
@@ -114,7 +150,16 @@ class ShopifyQuery:
         # Build the query
         operation = Operation(
             type=self.query_type,
+            name=self.operation_name,
             queries=[Query(name=self.entity, arguments=entity_args, fields=processed_fields)],
         )
 
-        return operation.render()
+        # Add variable definitions if present
+        query_str = operation.render()
+        if self.variables:
+            # Insert variable definitions after operation name
+            operation_start = f"{self.query_type} {self.operation_name or ''}"
+            var_defs = self._format_variable_definitions()
+            query_str = query_str.replace(operation_start, f"{operation_start}{var_defs}", 1)
+
+        return query_str

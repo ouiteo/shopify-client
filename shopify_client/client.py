@@ -12,7 +12,7 @@ from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .builder import ShopifyQuery
 from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
-from .types import ShopifyWebhookSubscription, ShopifyWebhookTopic
+from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
 from .utils import get_error_codes
 
 logger = logging.getLogger(__name__)
@@ -194,8 +194,9 @@ class ShopifyClient:
         job_type: "QUERY" or "MUTATION"
         """
         query = ShopifyQuery(
-            "currentBulkOperation",
-            [
+            operation_name="currentBulkOperation",
+            entity="currentBulkOperation",
+            fields=[
                 "id",
                 "status",
                 "errorCode",
@@ -220,8 +221,9 @@ class ShopifyClient:
         Poll the bulk operation until it is complete, then return the dataframe
         """
         query = ShopifyQuery(
-            "currentBulkOperation",
-            [
+            operation_name="currentBulkOperation",
+            entity="currentBulkOperation",
+            fields=[
                 "id",
                 "status",
                 "errorCode",
@@ -262,8 +264,9 @@ class ShopifyClient:
             raise BulkQueryInProgress("Bulk query job already running")
 
         query = ShopifyQuery(
-            "bulkOperationRunQuery",
-            [
+            operation_name="bulkOperationRunQuery",
+            entity="bulkOperationRunQuery",
+            fields=[
                 {"name": "bulkOperation", "fields": ["id", "status"]},
                 {"name": "userErrors", "fields": ["field", "message"]},
             ],
@@ -290,6 +293,7 @@ class ShopifyClient:
             raise ValueError("Bulk mutation job already running")
 
         query = ShopifyQuery(
+            operation_name="bulkOperationRunMutation",
             entity="bulkOperationRunMutation",
             fields=[
                 {"name": "bulkOperation", "fields": ["id", "status"]},
@@ -315,6 +319,7 @@ class ShopifyClient:
         Get all webhook subscriptions
         """
         query = ShopifyQuery(
+            operation_name="webhookSubscriptions",
             entity="webhookSubscriptions",
             fields=[
                 "id",
@@ -332,26 +337,26 @@ class ShopifyClient:
         response = await self.graphql(query)
         return [edge["node"] for edge in response["data"]["webhookSubscriptions"]["edges"]]
 
-    async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: ShopifyWebhookSubscription) -> None:
+    async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: WebhookSubscriptionInput) -> None:
         """
         Subscribe to a webhook topic
         """
         query = ShopifyQuery(
-            entity="webhookSubscriptionCreate",
+            operation_name="webhookSubscriptionCreate",
+            entity="webhookSubscription",
             fields=[
+                "id",
+                "topic",
+                {
+                    "name": "endpoint",
+                    "fields": [
+                        {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
+                        {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
+                    ],
+                },
                 {
                     "name": "webhookSubscription",
-                    "fields": [
-                        "id",
-                        "topic",
-                        {
-                            "name": "endpoint",
-                            "fields": [
-                                {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
-                                {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
-                            ],
-                        },
-                    ],
+                    "fields": ["id", "topic", "filter", "format", "endpoint"],
                 },
                 {"name": "userErrors", "fields": ["field", "message"]},
             ],

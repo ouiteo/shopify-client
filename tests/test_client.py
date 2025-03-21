@@ -5,13 +5,13 @@ import pytest
 from shopify_client.builder import ShopifyQuery
 from shopify_client.client import ShopifyClient
 from shopify_client.exceptions import QueryError
-from shopify_client.types import ShopifyWebhookSubscription, ShopifyWebhookTopic
+from shopify_client.types import ShopifyWebhookTopic, WebhookSubscriptionInput
 
 
 async def test_basic_graphql_call(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["shopName"] = {"data": {"shop": {"name": "Test Store 1"}}}
+    mock_shopify_api["getShopName"] = {"data": {"shop": {"name": "Test Store 1"}}}
 
-    query = ShopifyQuery("shop", ["name"])
+    query = ShopifyQuery(operation_name="getShopName", entity="shop", fields=["name"])
 
     async with ShopifyClient("test-store", "access-token") as client:
         response = await client.graphql(query)
@@ -41,7 +41,11 @@ async def test_graphql_call_with_pagination(mock_shopify_api: dict[str, dict[str
         }
     }
 
-    query = ShopifyQuery("products", ["id", "title", {"name": "pageInfo", "fields": ["hasNextPage", "endCursor"]}])
+    query = ShopifyQuery(
+        operation_name="GetProducts",
+        entity="products",
+        fields=["id", "title", {"name": "pageInfo", "fields": ["hasNextPage", "endCursor"]}],
+    )
 
     async with ShopifyClient("test-store", "access-token") as client:
         response = await client.graphql_call_with_pagination(query)
@@ -53,14 +57,14 @@ async def test_graphql_call_with_pagination(mock_shopify_api: dict[str, dict[str
 
 
 async def test_graphql_call_with_unrecoverable_error(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["shopName"] = {
+    mock_shopify_api["getShopName"] = {
         "error": {
             "data": None,
             "errors": [{"message": "Invalid query syntax"}],
         }
     }
 
-    query = ShopifyQuery("shop", ["name"])
+    query = ShopifyQuery(operation_name="getShopName", entity="shop", fields=["name"])
 
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(QueryError) as exc_info:
@@ -81,7 +85,7 @@ async def test_run_bulk_operation_query_with_error(mock_shopify_api: dict[str, d
         }
     }
 
-    query = ShopifyQuery("bulkOperationRunQuery", ["userErrors"])
+    query = ShopifyQuery(operation_name="bulkOperation", entity="bulkOperationRunQuery", fields=["userErrors"])
 
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(QueryError) as exc_info:
@@ -125,7 +129,7 @@ async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -
     async with ShopifyClient("test-store", "access-token") as client:
         await client.subscribe_to_topic(
             ShopifyWebhookTopic.PRODUCTS_CREATE,
-            ShopifyWebhookSubscription(
+            WebhookSubscriptionInput(
                 arn="arn:aws:events:region:account:event-bus/name",
                 format="JSON",
             ),
