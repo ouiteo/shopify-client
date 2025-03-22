@@ -1,22 +1,20 @@
 import asyncio
 import logging
 from http import HTTPStatus
-from pathlib import Path
 from types import TracebackType
 from typing import Any, Optional, Self, Type, cast
 from urllib.parse import urlencode
 
 import httpx
-from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query, Variable
+from graphql_query import Argument, Field, Operation, Query, Variable
 from httpx._types import RequestContent
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
 from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
-from .utils import get_error_codes
+from .utils import get_error_codes, wrap_edges
 
 logger = logging.getLogger(__name__)
-GQL_DIR = Path(__file__).parent / "gql"
 
 retry_on_status = [
     HTTPStatus.TOO_MANY_REQUESTS.value,
@@ -24,11 +22,6 @@ retry_on_status = [
     HTTPStatus.SERVICE_UNAVAILABLE.value,
     HTTPStatus.GATEWAY_TIMEOUT.value,
 ]
-
-
-def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[str | Field | InlineFragment | Fragment]:
-    """Helper function to wrap fields in edges/node structure for connections"""
-    return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
 class ShopifyClient:
@@ -140,46 +133,44 @@ class ShopifyClient:
         """
         Execute a GraphQL query with pagination.
         """
-        results = []
-        has_next_page = True
-        cursor = None
+        results: list[dict[str, Any]] = []
+        cursor: str | None = None
 
-        while has_next_page:
-            if cursor:
-                variables["after"] = cursor
+        while True:
+            # Update variables with cursor if we have one
+            current_variables = {**variables}
+            if cursor is not None:
+                current_variables["after"] = cursor
 
-            response = await self.graphql(query, variables)
+            # Make the GraphQL call
+            response = await self.graphql(query, current_variables)
             data = response["data"]
 
-            # Get the first edge collection we find in the response
-            edges = None
-            for key, value in data.items():
-                if isinstance(value, dict) and "edges" in value:
-                    edges = value["edges"]
+            # Find the first paginated field in the response
+            paginated_field = None
+            for value in data.values():
+                if isinstance(value, dict) and "edges" in value and "pageInfo" in value:
+                    paginated_field = value
                     break
 
-            if not edges:
+            # No paginated field found
+            if paginated_field is None:
                 return None
 
-            for edge in edges:
-                results.append(edge["node"])
+            # Add nodes to results
+            results.extend(edge["node"] for edge in paginated_field["edges"])
 
-            page_info = None
-            for key, value in data.items():
-                if isinstance(value, dict) and "pageInfo" in value:
-                    page_info = value["pageInfo"]
-                    break
-
-            if not page_info:
-                break
-
-            has_next_page = page_info["hasNextPage"]
-            if has_next_page:
-                cursor = edges[-1]["cursor"]
-
+            # Check if we've hit the max limit
             if max_limit and len(results) >= max_limit:
                 results = results[:max_limit]
                 break
+
+            # Update pagination state
+            page_info = paginated_field["pageInfo"]
+            if not page_info["hasNextPage"]:
+                break
+
+            cursor = page_info["endCursor"]
 
         return results
 

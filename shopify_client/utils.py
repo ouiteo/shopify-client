@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Any
 
-from graphql_query import Field
+from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query
 
 Row = dict[str, Any]
 
@@ -16,6 +16,28 @@ def get_error_codes(data: dict[str, Any]) -> set[str]:
     return codes
 
 
+def create_paginated_query(
+    entity: str,
+    fields: list[str],
+    first: int = 10,
+) -> Operation:
+    """Create a paginated query for any entity"""
+    return Operation(
+        type="query",
+        name=f"get{entity.capitalize()}",
+        queries=[
+            Query(
+                name=entity,
+                arguments=[Argument(name="first", value=first)],
+                fields=[
+                    *wrap_edges([Field(name=field) for field in fields]),
+                    Field(name="pageInfo", fields=["hasNextPage", "endCursor"]),
+                ],
+            )
+        ],
+    )
+
+
 def format_query(query: str) -> str:
     """
     Format a GraphQL query string consistently
@@ -23,7 +45,8 @@ def format_query(query: str) -> str:
     return " ".join([x.strip() for x in query.split("\n")]).strip().replace("( ", "(").replace(" )", ")")
 
 
-def wrap_edges(fields: list[Any]) -> list[Any]:
+def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[str | Field | InlineFragment | Fragment]:
+    """Helper function to wrap fields in edges/node structure for connections"""
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
