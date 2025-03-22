@@ -29,20 +29,23 @@ include = ["shopify_client"]
 exclude = ["tests"]
 
 [tool.poetry.dependencies]
-python = ">=3.9"
+python = ">=3.9,<4.0"
 httpx = ">=0.13"
 tenacity = "^9.0.0"
 jsonlines = "^4.0.0"
 graphql-query = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest-httpx = "^0.26.0"
-mypy = "^1.6.1"
-ipdb = "^0.13.13"
 pytest = "^7.4.3"
 pytest-cov = "^4.1.0"
 pytest-asyncio = "^0.21.1"
-ruff = "*"                      # linter and code formatter
+pytest-httpx = "^0.26.0"
+mypy = "^1.6.1"
+ipdb = "^0.13.13"
+ruff = "*"
+typer = "^0.15.2"
+rich = "^13.9.4"
+asyncer = "^0.0.5"
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ouiteo/shopify_client/issues"
