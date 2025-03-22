@@ -50,7 +50,7 @@ def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[st
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
-def graphql_to_pandas(data: list[Row]) -> dict[str, Any]:
+def paginated_json_to_entities_dfs(data: list[Row]) -> dict[str, Any]:
     """
     convert data into a dictionary of entities, keyed on entity name,
     ensuring each child entity has its parents id as a __parentId key
@@ -89,10 +89,13 @@ def graphql_to_pandas(data: list[Row]) -> dict[str, Any]:
     return {k: pd.DataFrame(v) for k, v in datasets.items()}
 
 
-def normalise_jsonl(df: Any) -> dict[str, Any]:
+def pd_jsonl_to_entities_dfs(df: Any) -> dict[str, Any]:
     """
-    normalise jsonl data into a dictionary of entities, keyed on entity name,
-    ensuring each child entity has its parents id as a __parentId key
+    convert a dataframe read from jsonl into a dictionary of entities, keyed on entity name,
+    ensuring each child entity has its parents id as a __parentId key, e.g:
+
+    df = pd.read_json("data.jsonl", lines=True)
+    datasets = pd_jsonl_to_entities(df)
     """
 
     datasets = {}
