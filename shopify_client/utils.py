@@ -1,6 +1,8 @@
 from collections import defaultdict
 from typing import Any
 
+from graphql_query import Field
+
 Row = dict[str, Any]
 
 
@@ -14,6 +16,17 @@ def get_error_codes(data: dict[str, Any]) -> set[str]:
     return codes
 
 
+def format_query(query: str) -> str:
+    """
+    Format a GraphQL query string consistently
+    """
+    return " ".join([x.strip() for x in query.split("\n")]).strip().replace("( ", "(").replace(" )", ")")
+
+
+def wrap_edges(fields: list[Any]) -> list[Any]:
+    return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
+
+
 def graphql_to_pandas(data: list[Row]) -> dict[str, Any]:
     """
     convert data into a dictionary of entities, keyed on entity name,
@@ -22,8 +35,17 @@ def graphql_to_pandas(data: list[Row]) -> dict[str, Any]:
     e.g
 
     client = ShopifyClient("test-store", "test-token")
-    query = str(ShopifyQuery("products", ["id", "title", "handle"], args={"first": 250}))
-    data = await client.graphql_call_with_pagination("products", "query { products { id, title } }")
+    query = Operation(
+        type="query",
+        queries=[
+            Query(
+                name="products",
+                fields=["id", "title", "handle"],
+                arguments=[Argument(name="first", value=250)],
+            )
+        ],
+    )
+    data = await client.graphql_call_with_pagination(query)
     df = graphql_to_pandas(data)
     """
     import pandas as pd

@@ -7,10 +7,10 @@ from typing import Any, Optional, Self, Type, cast
 from urllib.parse import urlencode
 
 import httpx
+from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query, Variable
 from httpx._types import RequestContent
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
-from .builder import ShopifyQuery
 from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
 from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
 from .utils import get_error_codes
@@ -24,6 +24,11 @@ retry_on_status = [
     HTTPStatus.SERVICE_UNAVAILABLE.value,
     HTTPStatus.GATEWAY_TIMEOUT.value,
 ]
+
+
+def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[str | Field | InlineFragment | Fragment]:
+    """Helper function to wrap fields in edges/node structure for connections"""
+    return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
 class ShopifyClient:
@@ -83,10 +88,6 @@ class ShopifyClient:
         return data["access_token"], data["scope"]
 
     @staticmethod
-    def parse_query(query: str) -> str:
-        return " ".join([x.strip() for x in query.split("\n")])
-
-    @staticmethod
     async def proxy_pass(store: str, token: str, method: str, url: str, body: RequestContent) -> httpx.Response:
         """
         Proxy requests directly to the Shopify API.
@@ -102,12 +103,12 @@ class ShopifyClient:
         return response
 
     @retry(wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type(RetriableException))
-    async def graphql(self, query: ShopifyQuery, variables: dict[str, Any] = {}) -> dict[str, Any]:
+    async def graphql(self, query: Operation, variables: dict[str, Any] = {}) -> dict[str, Any]:
         """
         Execute a GraphQL query against the Shopify API.
 
         Args:
-            query: A ShopifyQuery instance that defines the query structure
+            query: An Operation instance that defines the query structure
             variables: Variables to pass to the query
 
         Returns:
@@ -116,12 +117,8 @@ class ShopifyClient:
         Raises:
             QueryError: If the query contains errors
             RetriableException: If the request should be retried due to temporary issues
-
-        Example:
-            >>> builder = ShopifyQuery("shop", ["name"])
-            >>> response = await client.graphql(builder)
         """
-        json_data = {"query": str(query), "variables": variables}
+        json_data = {"query": query.render(), "variables": variables}
         response = await self.session.post(self.base_url, json=json_data)
         if response.status_code in retry_on_status:
             raise RetriableException(f"retrying http {response.status_code}")
@@ -137,77 +134,77 @@ class ShopifyClient:
 
         return data
 
-    async def graphql_call_with_pagination(
-        self, query: ShopifyQuery, variables: dict[str, Any] = {}, max_limit: int | None = None
+    async def graphql_call_with_pagination(  # noqa: C901
+        self, query: Operation, variables: dict[str, Any] = {}, max_limit: int | None = None
     ) -> list[dict[str, Any]] | None:
         """
-        Make a graphql query with pagination using a ShopifyQuery instance.
-
-        Args:
-            query: The ShopifyQuery instance that defines the query structure
-            variables: The variables to pass to the query
-            max_limit: Maximum number of items to return
-
-        Returns:
-            A list of entity data, or None if no data is found
-
-        Example:
-            >>> builder = ShopifyQuery("products", ["id", "title", "handle"], args={"first": 250})
-            >>> data = await client.graphql_call_with_pagination(builder)
+        Execute a GraphQL query with pagination.
         """
+        results = []
         has_next_page = True
-        end_cursor: str | None = None
-        data = []
-
-        # Ensure the query includes pagination fields
-        if not any(field == "pageInfo" for field in query.fields):
-            query.fields.append("pageInfo")
-        if not any(field == "edges" for field in query.fields):
-            query.fields.append("edges")
+        cursor = None
 
         while has_next_page:
-            variables["cursor"] = end_cursor
-            response = await self.graphql(query, variables)
+            if cursor:
+                variables["after"] = cursor
 
-            # Navigate to the entity data
-            entity_data = response.get("data", {}).get(query.entity, {})
-            if not entity_data:
+            response = await self.graphql(query, variables)
+            data = response["data"]
+
+            # Get the first edge collection we find in the response
+            edges = None
+            for key, value in data.items():
+                if isinstance(value, dict) and "edges" in value:
+                    edges = value["edges"]
+                    break
+
+            if not edges:
                 return None
 
-            page_info = entity_data.get("pageInfo", {})
-            has_next_page = page_info.get("hasNextPage", False)
-            end_cursor = page_info.get("endCursor", None)
-            entity_data.pop("pageInfo", None)
+            for edge in edges:
+                results.append(edge["node"])
 
-            # Extract node data from edges
-            for edge in entity_data.get("edges", []):
-                data.append(edge.get("node", {}))
+            page_info = None
+            for key, value in data.items():
+                if isinstance(value, dict) and "pageInfo" in value:
+                    page_info = value["pageInfo"]
+                    break
 
-            if max_limit and len(data) >= max_limit:
-                return data[:max_limit]
+            if not page_info:
+                break
 
-        return data
+            has_next_page = page_info["hasNextPage"]
+            if has_next_page:
+                cursor = edges[-1]["cursor"]
+
+            if max_limit and len(results) >= max_limit:
+                results = results[:max_limit]
+                break
+
+        return results
 
     async def is_bulk_job_running(self, job_type: str) -> bool:
-        """
-        Check if a bulk operation is running
-        job_type: "QUERY" or "MUTATION"
-        """
-        query = ShopifyQuery(
-            operation_name="currentBulkOperation",
-            entity="currentBulkOperation",
-            fields=[
-                "id",
-                "status",
-                "errorCode",
-                "createdAt",
-                "completedAt",
-                "objectCount",
-                "fileSize",
-                "url",
-                "partialDataUrl",
+        """Check if a bulk operation is running"""
+        query = Operation(
+            type="query",
+            name="currentBulkOperation",
+            queries=[
+                Query(
+                    name="currentBulkOperation",
+                    arguments=[Argument(name="type", value=job_type)],
+                    fields=[
+                        Field(name="id"),
+                        Field(name="status"),
+                        Field(name="errorCode"),
+                        Field(name="createdAt"),
+                        Field(name="completedAt"),
+                        Field(name="objectCount"),
+                        Field(name="fileSize"),
+                        Field(name="url"),
+                        Field(name="partialDataUrl"),
+                    ],
+                )
             ],
-            args={"type": job_type},
         )
         response = await self.graphql(query)
         current_bulk_operation = response["data"]["currentBulkOperation"]
@@ -217,24 +214,27 @@ class ShopifyClient:
         return False
 
     async def poll_until_complete(self, job_id: str, job_type: str) -> str | None:
-        """
-        Poll the bulk operation until it is complete, then return the dataframe
-        """
-        query = ShopifyQuery(
-            operation_name="currentBulkOperation",
-            entity="currentBulkOperation",
-            fields=[
-                "id",
-                "status",
-                "errorCode",
-                "createdAt",
-                "completedAt",
-                "objectCount",
-                "fileSize",
-                "url",
-                "partialDataUrl",
+        """Poll the bulk operation until it is complete"""
+        query = Operation(
+            type="query",
+            name="currentBulkOperation",
+            queries=[
+                Query(
+                    name="currentBulkOperation",
+                    arguments=[Argument(name="type", value=job_type)],
+                    fields=[
+                        Field(name="id"),
+                        Field(name="status"),
+                        Field(name="errorCode"),
+                        Field(name="createdAt"),
+                        Field(name="completedAt"),
+                        Field(name="objectCount"),
+                        Field(name="fileSize"),
+                        Field(name="url"),
+                        Field(name="partialDataUrl"),
+                    ],
+                )
             ],
-            args={"type": job_type},
         )
         bulk_check_response = await self.graphql(query)
 
@@ -256,21 +256,25 @@ class ShopifyClient:
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 
     async def run_bulk_operation_query(
-        self, sub_query: ShopifyQuery, variables: dict[str, Any] = {}, wait: bool = True
+        self, sub_query: Operation, variables: dict[str, Any] = {}, wait: bool = True
     ) -> str | None:
-        # check if any bulk query job in progress currently
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
         if is_job_running:
             raise BulkQueryInProgress("Bulk query job already running")
 
-        query = ShopifyQuery(
-            operation_name="bulkOperationRunQuery",
-            entity="bulkOperationRunQuery",
-            fields=[
-                {"name": "bulkOperation", "fields": ["id", "status"]},
-                {"name": "userErrors", "fields": ["field", "message"]},
+        query = Operation(
+            type="query",
+            name="bulkOperationRunQuery",
+            queries=[
+                Query(
+                    name="bulkOperationRunQuery",
+                    arguments=[Argument(name="query", value=sub_query.render())],
+                    fields=[
+                        Field(name="bulkOperation", fields=[Field(name="id"), Field(name="status")]),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
+                    ],
+                )
             ],
-            args={"query": str(sub_query)},
         )
         response = await self.graphql(query, variables)
 
@@ -285,22 +289,25 @@ class ShopifyClient:
         return job_id
 
     async def run_bulk_operation_mutation(
-        self, sub_query: ShopifyQuery, variables: dict[str, Any] = {}, wait: bool = True
+        self, sub_query: Operation, variables: dict[str, Any] = {}, wait: bool = True
     ) -> str | None:
-        # check if any bulk mutation job in progress currently
         is_job_running = await self.is_bulk_job_running(job_type="MUTATION")
         if is_job_running:
             raise ValueError("Bulk mutation job already running")
 
-        query = ShopifyQuery(
-            operation_name="bulkOperationRunMutation",
-            entity="bulkOperationRunMutation",
-            fields=[
-                {"name": "bulkOperation", "fields": ["id", "status"]},
-                {"name": "userErrors", "fields": ["field", "message"]},
+        query = Operation(
+            type="mutation",
+            name="bulkOperationRunMutation",
+            queries=[
+                Query(
+                    name="bulkOperationRunMutation",
+                    arguments=[Argument(name="mutation", value=sub_query.render())],
+                    fields=[
+                        Field(name="bulkOperation", fields=[Field(name="id"), Field(name="status")]),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
+                    ],
+                )
             ],
-            args={"mutation": str(sub_query)},
-            query_type="mutation",
         )
         response = await self.graphql(query, variables)
 
@@ -315,55 +322,82 @@ class ShopifyClient:
         return job_id
 
     async def get_webhook_subscriptions(self) -> list[dict[str, Any]]:
-        """
-        Get all webhook subscriptions
-        """
-        query = ShopifyQuery(
-            operation_name="webhookSubscriptions",
-            entity="webhookSubscriptions",
-            fields=[
-                "id",
-                "topic",
-                {
-                    "name": "endpoint",
-                    "fields": [
-                        {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
-                        {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
-                    ],
-                },
+        """Get all webhook subscriptions"""
+        query = Operation(
+            type="query",
+            name="webhookSubscriptions",
+            queries=[
+                Query(
+                    name="webhookSubscriptions",
+                    arguments=[Argument(name="first", value=250)],
+                    fields=wrap_edges(
+                        [
+                            Field(name="id"),
+                            Field(name="topic"),
+                            Field(
+                                name="endpoint",
+                                fields=[
+                                    Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
+                                    Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                ],
+                            ),
+                        ]
+                    ),
+                )
             ],
-            args={"first": 250},
         )
         response = await self.graphql(query)
         return [edge["node"] for edge in response["data"]["webhookSubscriptions"]["edges"]]
 
     async def subscribe_to_topic(self, topic: ShopifyWebhookTopic, subscription: WebhookSubscriptionInput) -> None:
-        """
-        Subscribe to a webhook topic
-        """
-        query = ShopifyQuery(
-            operation_name="webhookSubscriptionCreate",
-            entity="webhookSubscription",
-            fields=[
-                "id",
-                "topic",
-                {
-                    "name": "endpoint",
-                    "fields": [
-                        {"name": "__typename ... on WebhookHttpEndpoint", "fields": ["callbackUrl"]},
-                        {"name": "... on WebhookEventBridgeEndpoint", "fields": ["arn"]},
+        """Subscribe to a webhook topic"""
+        query = Operation(
+            type="mutation",
+            name="webhookSubscriptionCreate",
+            queries=[
+                Query(
+                    name="webhookSubscriptionCreate",
+                    arguments=[
+                        Argument(name="topic", value="$topic"),
+                        Argument(name="webhookSubscription", value="$webhookSubscription"),
                     ],
-                },
-                {
-                    "name": "webhookSubscription",
-                    "fields": ["id", "topic", "filter", "format", "endpoint"],
-                },
-                {"name": "userErrors", "fields": ["field", "message"]},
+                    fields=[
+                        Field(
+                            name="webhookSubscription",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="topic"),
+                                Field(name="filter"),
+                                Field(name="format"),
+                                Field(
+                                    name="endpoint",
+                                    fields=[
+                                        Field(name="__typename"),
+                                        Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
+                                        Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        Field(
+                            name="userErrors",
+                            fields=[Field(name="field"), Field(name="message")],
+                        ),
+                    ],
+                )
             ],
-            args={"topic": "WebhookSubscriptionTopic!", "webhookSubscription": "WebhookSubscriptionInput!"},
-            query_type="mutation",
+            variables=[
+                Variable(name="topic", type="WebhookSubscriptionTopic!"),
+                Variable(name="webhookSubscription", type="WebhookSubscriptionInput!"),
+            ],
         )
-        response = await self.graphql(query, variables={"topic": topic.value, "webhookSubscription": subscription})
+        response = await self.graphql(
+            query,
+            variables={
+                "topic": topic.value,
+                "webhookSubscription": subscription,
+            },
+        )
         user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
         if user_errors:
             raise QueryError(user_errors)
