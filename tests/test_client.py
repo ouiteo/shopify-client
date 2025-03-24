@@ -113,9 +113,7 @@ async def test_run_bulk_operation_query_with_error(mock_shopify_api: dict[str, d
         }
     }
 
-    query = Operation(
-        type="query", name="bulkOperation", queries=[Query(name="bulkOperationRunQuery", fields=["userErrors"])]
-    )
+    query = Query(name="bulkOperationRunQuery", fields=["userErrors"])
 
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(QueryError) as exc_info:

@@ -50,7 +50,9 @@ def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[st
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
-def add_to_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[str | Field | InlineFragment | Fragment]:
+def add_to_edges(
+    fields: list[str | Field | InlineFragment | Fragment],
+) -> list[str | Field | InlineFragment | Fragment]:
     """Helper function to add to edges/node structure for connections"""
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
