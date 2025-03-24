@@ -246,19 +246,20 @@ class ShopifyClient:
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 
     async def run_bulk_operation_query(
-        self, sub_query: Operation, variables: dict[str, Any] = {}, wait: bool = True
+        self, sub_query: Query, variables: dict[str, Any] = {}, wait: bool = True
     ) -> str | None:
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
         if is_job_running:
             raise BulkQueryInProgress("Bulk query job already running")
 
+        subquery = '"""\n{\n' + sub_query.render() + '\n}\n"""'
         query = Operation(
-            type="query",
+            type="mutation",
             name="bulkOperationRunQuery",
             queries=[
                 Query(
                     name="bulkOperationRunQuery",
-                    arguments=[Argument(name="query", value=sub_query.render())],
+                    arguments=[Argument(name="query", value=subquery)],
                     fields=[
                         Field(name="bulkOperation", fields=[Field(name="id"), Field(name="status")]),
                         Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),

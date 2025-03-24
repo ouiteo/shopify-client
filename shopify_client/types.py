@@ -1,6 +1,10 @@
 from enum import StrEnum
 from typing import Literal, NotRequired, TypedDict
 
+from graphql_query import Field, Fragment, InlineFragment
+
+FieldT = str | Field | InlineFragment | Fragment
+
 
 class ShopifyWebhookTopic(StrEnum):
     APP_PURCHASES_ONE_TIME_UPDATE = "APP_PURCHASES_ONE_TIME_UPDATE"
