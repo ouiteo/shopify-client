@@ -58,6 +58,32 @@ async def test_graphql_call_with_pagination(mock_shopify_api: dict[str, dict[str
     ]
 
 
+async def test_graphql_paginated_no_pageinfo(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["GetProducts"] = {
+        "data": {
+            "products": {
+                "edges": [{"node": {"id": "1", "title": "Product 1"}}, {"node": {"id": "2", "title": "Product 2"}}]
+            }
+        }
+    }
+
+    query = Operation(
+        type="query",
+        name="GetProducts",
+        queries=[
+            Query(name="products", fields=["id", "title", Field(name="pageInfo", fields=["hasNextPage", "endCursor"])])
+        ],
+    )
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        response = await client.graphql_call_with_pagination(query)
+
+    assert response == [
+        {"id": "1", "title": "Product 1"},
+        {"id": "2", "title": "Product 2"},
+    ]
+
+
 async def test_graphql_call_with_unrecoverable_error(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
     mock_shopify_api["getShopName"] = {
         "error": {

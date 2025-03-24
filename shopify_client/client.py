@@ -129,9 +129,10 @@ class ShopifyClient:
 
     async def graphql_call_with_pagination(  # noqa: C901
         self, query: Operation, variables: dict[str, Any] = {}, max_limit: int | None = None
-    ) -> list[dict[str, Any]] | None:
+    ) -> list[dict[str, Any]]:
         """
         Execute a GraphQL query with pagination.
+        Returns a list of nodes from the response, handling both paginated and non-paginated responses.
         """
         results: list[dict[str, Any]] = []
         cursor: str | None = None
@@ -146,31 +147,29 @@ class ShopifyClient:
             response = await self.graphql(query, current_variables)
             data = response["data"]
 
-            # Find the first paginated field in the response
-            paginated_field = None
+            # Find and process nodes from the response
             for value in data.values():
-                if isinstance(value, dict) and "edges" in value and "pageInfo" in value:
-                    paginated_field = value
-                    break
-
-            # No paginated field found
-            if paginated_field is None:
-                return None
-
-            # Add nodes to results
-            results.extend(edge["node"] for edge in paginated_field["edges"])
+                if isinstance(value, dict):
+                    # Handle paginated response
+                    if "edges" in value:
+                        results.extend(edge["node"] for edge in value["edges"])
+                        if "pageInfo" in value and value["pageInfo"]["hasNextPage"]:
+                            cursor = value["pageInfo"]["endCursor"]
+                        else:
+                            cursor = None
+                    # Handle non-paginated response with nodes
+                    elif "nodes" in value:
+                        results.extend(value["nodes"])
+                        cursor = None
 
             # Check if we've hit the max limit
             if max_limit and len(results) >= max_limit:
                 results = results[:max_limit]
                 break
 
-            # Update pagination state
-            page_info = paginated_field["pageInfo"]
-            if not page_info["hasNextPage"]:
+            # Break if no more pages
+            if cursor is None:
                 break
-
-            cursor = page_info["endCursor"]
 
         return results
 
