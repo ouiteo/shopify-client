@@ -49,7 +49,8 @@ def mock_shopify_api(httpx_mock: HTTPXMock) -> dict[str, Any]:
             raise ValueError(f"Test: {current_test} -> Response not mocked out for {query_name}")
 
         data = responses[query_name]
-        return httpx.Response(200, json=data)
+        status = data.get("error", {}).get("status") if data.get("error", {}).get("status") else 200
+        return httpx.Response(status, json=data)
 
     pattern = re.compile(r"https://.*.myshopify.com/.*")
     httpx_mock.add_callback(handler, url=pattern)

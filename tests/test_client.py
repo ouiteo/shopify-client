@@ -4,7 +4,7 @@ import pytest
 from graphql_query import Field, Operation, Query
 
 from shopify_client.client import ShopifyClient
-from shopify_client.exceptions import QueryError
+from shopify_client.exceptions import QueryError, ShopUnavailableException
 from shopify_client.types import ShopifyWebhookTopic, WebhookSubscriptionInput
 
 
@@ -162,3 +162,13 @@ async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -
                 format="JSON",
             ),
         )
+
+
+async def test_shop_not_available(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["unavailableStore"] = {
+        "error": {"data": None, "errors": [{"message": "This is error msg"}], "status": 402}
+    }
+    query = Operation(type="query", name="unavailableStore", queries=[Query(name="shop", fields=["name"])])
+    async with ShopifyClient("test-store", "access-token") as client:
+        with pytest.raises(ShopUnavailableException):
+            await client.graphql(query)

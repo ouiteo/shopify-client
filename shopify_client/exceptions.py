@@ -12,3 +12,7 @@ class BulkQueryInProgress(Exception):
 
 class ThrottledException(RetriableException):
     pass
+
+
+class ShopUnavailableException(Exception):
+    pass
