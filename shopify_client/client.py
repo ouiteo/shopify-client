@@ -10,7 +10,13 @@ from graphql_query import Argument, Field, Operation, Query, Variable
 from httpx._types import RequestContent
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
-from .exceptions import BulkQueryInProgress, QueryError, RetriableException, ThrottledException
+from .exceptions import (
+    BulkQueryInProgress,
+    QueryError,
+    RetriableException,
+    ShopUnavailableException,
+    ThrottledException,
+)
 from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
 from .utils import get_error_codes, wrap_edges
 
@@ -21,6 +27,10 @@ retry_on_status = [
     HTTPStatus.BAD_GATEWAY.value,
     HTTPStatus.SERVICE_UNAVAILABLE.value,
     HTTPStatus.GATEWAY_TIMEOUT.value,
+]
+shop_unavailable_status = [
+    HTTPStatus.PAYMENT_REQUIRED.value,
+    HTTPStatus.NOT_FOUND.value,
 ]
 
 
@@ -115,7 +125,8 @@ class ShopifyClient:
         response = await self.session.post(self.base_url, json=json_data)
         if response.status_code in retry_on_status:
             raise RetriableException(f"retrying http {response.status_code}")
-
+        elif response.status_code in shop_unavailable_status:
+            raise ShopUnavailableException(f"Shop not available : {self.base_url}")
         response.raise_for_status()
         data = cast(dict[str, Any], response.json())
 
