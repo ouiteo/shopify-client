@@ -162,3 +162,19 @@ async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -
                 format="JSON",
             ),
         )
+
+
+async def test_bulk_operation_mutation(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["currentBulkOperation"] = {
+        "data": {
+            "currentBulkOperation": {
+                "id": "gid://shopify/BulkOperation/1",
+                "status": "COMPLETED",
+                "objectCount": 1,
+                "url": "https://download.com",
+            }
+        }
+    }
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        await client.run_bulk_operation_mutation(query)

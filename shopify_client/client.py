@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from http import HTTPStatus
 from types import TracebackType
 from typing import Any, Optional, Self, Type, cast
@@ -280,19 +281,57 @@ class ShopifyClient:
         return job_id
 
     async def run_bulk_operation_mutation(
-        self, sub_query: Operation, variables: dict[str, Any] = {}, wait: bool = True
+        self,
+        sub_query: Operation,
+        rows: list[dict[str, Any]],
+        key: str | None = "input",
+        variables: dict[str, Any] = {},
+        wait: bool = True,
     ) -> str | None:
         is_job_running = await self.is_bulk_job_running(job_type="MUTATION")
         if is_job_running:
             raise ValueError("Bulk mutation job already running")
 
+        filename = f"{uuid.uuid4()}.jsonl"
         query = Operation(
+            type="mutation",
+            queries=[
+                Query(
+                    name="stagedUploadsCreate",
+                    arguments=[
+                        Argument(
+                            name="input",
+                            value=[
+                                Argument(name="resource", value="BULK_MUTATION_VARIABLES"),
+                                Argument(name="filename", value=filename),
+                                Argument(name="mimeType", value='"text/jsonl"'),
+                                Argument(name="httpMethod", value="POST"),
+                            ],
+                        )
+                    ],
+                    fields=[
+                        Field(name="userErrors", fields=[Field(name="message"), Field(name="field")]),
+                        Field(
+                            name="stagedTargets",
+                            fields=[
+                                Field(name="url"),
+                                Field(name="resourceUrl"),
+                                Field(name="parameters", fields=[Field(name="name"), Field(name="value")]),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        subquery = '"""\n{\n' + sub_query.render() + '\n}\n"""'
+        operation = Operation(
             type="mutation",
             name="bulkOperationRunMutation",
             queries=[
                 Query(
                     name="bulkOperationRunMutation",
-                    arguments=[Argument(name="mutation", value=sub_query.render())],
+                    arguments=[Argument(name="mutation", value=subquery)],
                     fields=[
                         Field(name="bulkOperation", fields=[Field(name="id"), Field(name="status")]),
                         Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
@@ -300,7 +339,9 @@ class ShopifyClient:
                 )
             ],
         )
-        response = await self.graphql(query, variables)
+
+        breakpoint()
+        response = await self.graphql(operation, variables)
 
         user_errors = response["data"]["bulkOperationRunMutation"]["userErrors"]
         if user_errors:
