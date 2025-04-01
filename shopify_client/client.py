@@ -152,7 +152,7 @@ class ShopifyClient:
             # Update variables with cursor if we have one
             current_variables = {**variables}
             if cursor is not None:
-                current_variables["after"] = cursor
+                current_variables["cursor"] = cursor
 
             # Make the GraphQL call
             response = await self.graphql(query, current_variables)
