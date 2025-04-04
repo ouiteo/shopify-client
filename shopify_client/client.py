@@ -2,7 +2,7 @@ import asyncio
 import logging
 from http import HTTPStatus
 from types import TracebackType
-from typing import Any, Optional, Self, Type, cast
+from typing import Any, Literal, Optional, Self, Type, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -17,7 +17,7 @@ from .exceptions import (
     ShopUnavailableException,
     ThrottledException,
 )
-from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
+from .types import EventBridgeWebhookSubscriptionInput, ShopifyWebhookTopic, WebhookSubscriptionInput
 from .utils import get_error_codes, wrap_edges
 
 logger = logging.getLogger(__name__)
@@ -323,6 +323,9 @@ class ShopifyClient:
 
         return job_id
 
+    #########################
+    # Webhook Subscriptions #
+    #########################
     async def get_webhook_subscriptions(self) -> list[dict[str, Any]]:
         """Get all webhook subscriptions"""
         query = Operation(
@@ -376,15 +379,11 @@ class ShopifyClient:
                                     fields=[
                                         Field(name="__typename"),
                                         Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
-                                        Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
                                     ],
                                 ),
                             ],
                         ),
-                        Field(
-                            name="userErrors",
-                            fields=[Field(name="field"), Field(name="message")],
-                        ),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
                     ],
                 )
             ],
@@ -403,3 +402,235 @@ class ShopifyClient:
         user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
         if user_errors:
             raise QueryError(user_errors)
+
+    async def eventbridge_subscribe_to_topic(
+        self, topic: ShopifyWebhookTopic, subscription: EventBridgeWebhookSubscriptionInput
+    ) -> None:
+        """EventBridge webhook subscription topic"""
+        query = Operation(
+            type="mutation",
+            name="eventBridgeWebhookSubscriptionCreate",
+            queries=[
+                Query(
+                    name="eventBridgeWebhookSubscriptionCreate",
+                    arguments=[
+                        Argument(name="topic", value="$topic"),
+                        Argument(name="webhookSubscription", value="$webhookSubscription"),
+                    ],
+                    fields=[
+                        Field(
+                            name="webhookSubscription",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="topic"),
+                                Field(name="filter"),
+                                Field(name="format"),
+                                Field(
+                                    name="endpoint",
+                                    fields=[
+                                        Field(name="__typename"),
+                                        Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
+                    ],
+                )
+            ],
+            variables=[
+                Variable(name="topic", type="WebhookSubscriptionTopic!"),
+                Variable(name="webhookSubscription", type="EventBridgeWebhookSubscriptionInput!"),
+            ],
+        )
+
+        response = await self.graphql(
+            query,
+            variables={
+                "topic": topic.value,
+                "webhookSubscription": subscription,
+            },
+        )
+
+        user_errors = response["data"]["eventBridgeWebhookSubscriptionCreate"]["userErrors"]
+        if user_errors:
+            raise QueryError(user_errors)
+
+    async def delete_webhook_subscription(self, subscription_id: str) -> None:
+        """Delete a webhook subscription"""
+        query = Operation(
+            type="mutation",
+            name="webhookSubscriptionDelete",
+            queries=[
+                Query(
+                    name="webhookSubscriptionDelete",
+                    arguments=[Argument(name="id", value="$id")],
+                    fields=[
+                        Field(name="deletedWebhookSubscriptionId"),
+                        Field(
+                            name="userErrors",
+                            fields=[Field(name="field"), Field(name="message")],
+                        ),
+                    ],
+                )
+            ],
+            variables=[Variable(name="id", type="ID!")],
+        )
+        response = await self.graphql(query, variables={"id": subscription_id})
+        user_errors = response["data"]["webhookSubscriptionDelete"]["userErrors"]
+        if user_errors:
+            raise QueryError(user_errors)
+
+    #########################
+    # Metafield Definitions #
+    #########################
+    async def get_metafield_definitions(
+        self,
+        owner_type: Literal["PRODUCT", "COLLECTION"] = "COLLECTION",
+        namespace: Optional[str] = None,
+        key: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        List metafield definitions for a given owner type, namespace, and key.
+        """
+        query = Operation(
+            type="query",
+            name="metafieldDefinitions",
+            queries=[
+                Query(
+                    name="metafieldDefinitions",
+                    arguments=[
+                        Argument(name="first", value=250),
+                        Argument(name="ownerType", value="$ownerType"),
+                        *([Argument(name="namespace", value="$namespace")] if namespace else []),
+                        *([Argument(name="key", value="$key")] if key else []),
+                    ],
+                    fields=wrap_edges([Field(name="id"), Field(name="name"), Field(name="namespace")]),
+                )
+            ],
+            variables=[
+                Variable(name="ownerType", type="MetafieldOwnerType!"),
+                *([Variable(name="namespace", type="String")] if namespace else []),
+                *([Variable(name="key", type="String")] if key else []),
+            ],
+        )
+
+        variables: dict[str, Any] = {"ownerType": owner_type}
+        if namespace:
+            variables["namespace"] = namespace
+        if key:
+            variables["key"] = key
+
+        response = await self.graphql(query, variables=variables)
+        return [edge["node"] for edge in response["data"]["metafieldDefinitions"]["edges"]]
+
+    async def create_metafield_definition(self, input: dict[str, Any]) -> None:
+        """
+        Create metafield definition
+        """
+        query = Operation(
+            type="mutation",
+            name="MetafieldDefinitionCreateMutation",
+            queries=[
+                Query(
+                    name="metafieldDefinitionCreate",
+                    arguments=[Argument(name="definition", value="$input")],
+                    fields=[
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="code"),
+                                Field(name="message"),
+                                Field(name="field"),
+                                Field(name="__typename"),
+                            ],
+                        ),
+                        Field(name="__typename"),
+                    ],
+                )
+            ],
+            variables=[Variable(name="input", type="MetafieldDefinitionInput!")],
+        )
+
+        response = await self.graphql(query, {"input": input})
+
+        user_errors = response.get("data", {}).get("metafieldDefinitionCreate", {}).get("userErrors")
+        if user_errors:
+            raise ValueError(f"Error creating metafield definition: {user_errors}")
+
+    async def delete_metafield_definition(self, definition_id: str, delete_associated_metafields: bool = True) -> None:
+        """
+        Delete a metafield definition
+        """
+        query = Operation(
+            type="mutation",
+            name="DeleteMetafieldDefinition",
+            queries=[
+                Query(
+                    name="metafieldDefinitionDelete",
+                    arguments=[
+                        Argument(name="id", value="$id"),
+                        Argument(name="deleteAllAssociatedMetafields", value="$deleteAllAssociatedMetafields"),
+                    ],
+                    fields=[
+                        Field(name="deletedDefinitionId"),
+                        Field(
+                            name="userErrors", fields=[Field(name="field"), Field(name="message"), Field(name="code")]
+                        ),
+                    ],
+                )
+            ],
+            variables=[
+                Variable(name="id", type="ID!"),
+                Variable(name="deleteAllAssociatedMetafields", type="Boolean!"),
+            ],
+        )
+
+        variables = {
+            "id": definition_id,
+            "deleteAllAssociatedMetafields": delete_associated_metafields,
+        }
+        response = await self.graphql(query, variables=variables)
+
+        user_errors = response["data"]["metafieldDefinitionDelete"]["userErrors"]
+        if user_errors:
+            raise ValueError(f"Error deleting metafield definition: {user_errors}")
+
+    #########################
+    # Billing Subscription  #
+    #########################
+    async def check_subscription(self, id: str) -> bool:
+        """
+        Check if the subscription is active
+        """
+        query = Operation(
+            type="query",
+            name="check_subscription",
+            queries=[
+                Query(
+                    name="node",
+                    arguments=[Argument(name="id", value="$id")],
+                    fields=[
+                        Field(
+                            name="... on AppSubscription",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="status"),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+            variables=[Variable(name="id", type="ID!")],
+        )
+
+        variables = {"id": f"gid://shopify/AppSubscription/{id}"}
+        response = await self.graphql(query, variables)
+
+        node = response.get("data", {}).get("node", None)
+        if not node:
+            logger.error("Subscription not found")
+            return False
+
+        charge_active = node.get("status", "")
+        return bool(charge_active and charge_active == "ACTIVE")

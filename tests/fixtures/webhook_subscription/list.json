@@ -1,0 +1,15 @@
+{
+    "data": {
+        "webhookSubscriptions": {
+            "edges": [
+                {
+                    "node": {
+                        "id": "gid://shopify/WebhookSubscription/1",
+                        "topic": "APP_UNINSTALLED",
+                        "arn": "arn:aws:events:region:account:event-bus/name"
+                    }
+                }
+            ]
+        }
+    }
+}
