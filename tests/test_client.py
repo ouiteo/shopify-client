@@ -5,7 +5,9 @@ from graphql_query import Field, Operation, Query
 
 from shopify_client.client import ShopifyClient
 from shopify_client.exceptions import QueryError, ShopUnavailableException
-from shopify_client.types import ShopifyWebhookTopic, WebhookSubscriptionInput
+from shopify_client.types import EventBridgeWebhookSubscriptionInput, ShopifyWebhookTopic
+
+from tests.conftest import json_fixture
 
 
 async def test_basic_graphql_call(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
@@ -142,9 +144,9 @@ async def test_generate_redirect_url() -> None:
 
 
 async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-    mock_shopify_api["webhookSubscriptionCreate"] = {
+    mock_shopify_api["eventBridgeWebhookSubscriptionCreate"] = {
         "data": {
-            "webhookSubscriptionCreate": {
+            "eventBridgeWebhookSubscriptionCreate": {
                 "webhookSubscription": {
                     "id": "gid://shopify/WebhookSubscription/1",
                     "topic": "PRODUCTS_CREATE",
@@ -155,9 +157,9 @@ async def test_subscribe_to_topic(mock_shopify_api: dict[str, dict[str, Any]]) -
     }
 
     async with ShopifyClient("test-store", "access-token") as client:
-        await client.subscribe_to_topic(
+        await client.eventbridge_subscribe_to_topic(
             ShopifyWebhookTopic.PRODUCTS_CREATE,
-            WebhookSubscriptionInput(
+            EventBridgeWebhookSubscriptionInput(
                 arn="arn:aws:events:region:account:event-bus/name",
                 format="JSON",
             ),
@@ -172,3 +174,64 @@ async def test_shop_not_available(mock_shopify_api: dict[str, dict[str, Any]]) -
     async with ShopifyClient("test-store", "access-token") as client:
         with pytest.raises(ShopUnavailableException):
             await client.graphql(query)
+
+
+async def test_get_webhook_subscriptions(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["webhookSubscriptions"] = json_fixture("webhook_subscription/list.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        subscriptions = await client.get_webhook_subscriptions()
+
+    assert len(subscriptions) == 1
+    assert subscriptions[0]["topic"] == ShopifyWebhookTopic.APP_UNINSTALLED
+
+
+async def test_delete_webhook_subscription(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["webhookSubscriptionDelete"] = json_fixture("webhook_subscription/delete.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        await client.delete_webhook_subscription("gid://shopify/WebhookSubscription/1")
+
+    assert mock_shopify_api["webhookSubscriptionDelete"]["data"]["webhookSubscriptionDelete"]["userErrors"] == []
+
+
+async def test_get_metafield_definitions(
+    mock_shopify_api: dict[str, dict[str, Any]],
+) -> None:
+    mock_shopify_api["metafieldDefinitions"] = json_fixture("metafield/list.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        definitions = await client.get_metafield_definitions()
+
+    assert len(definitions) == 1
+    assert definitions[0]["namespace"] == "test_namespace"
+
+
+async def test_create_metafield_definition(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["MetafieldDefinitionCreateMutation"] = json_fixture("metafield/create.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        await client.create_metafield_definition(
+            {
+                "namespace": "test_namespace",
+                "key": "test_key",
+                "type": "single_line_text_field",
+                "ownerType": "PRODUCT",
+            }
+        )
+
+
+async def test_delete_metafield_definition(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["DeleteMetafieldDefinition"] = json_fixture("metafield/delete.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        await client.delete_metafield_definition("gid://shopify/MetafieldDefinition/1")
+
+
+async def test_check_subscription_status(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["check_subscription"] = json_fixture("subscription/check_subscription.json")
+
+    async with ShopifyClient("test-store", "access-token") as client:
+        response = await client.check_subscription("1234567890")
+
+    assert response is True

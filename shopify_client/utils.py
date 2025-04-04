@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query
 
@@ -20,15 +20,22 @@ def create_paginated_query(
     entity: str,
     fields: list[str],
     first: int = 10,
+    query_params: Optional[str] = None,
 ) -> Operation:
     """Create a paginated query for any entity"""
+    if query_params is None:
+        query_params = '""'
+
     return Operation(
         type="query",
         name=f"get{entity.capitalize()}",
         queries=[
             Query(
                 name=entity,
-                arguments=[Argument(name="first", value=first)],
+                arguments=[
+                    Argument(name="first", value=first),
+                    Argument(name="query", value=query_params),
+                ],
                 fields=[
                     *wrap_edges([Field(name=field) for field in fields]),
                     Field(name="pageInfo", fields=["hasNextPage", "endCursor"]),

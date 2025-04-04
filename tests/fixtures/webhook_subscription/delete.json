@@ -1,0 +1,8 @@
+{
+    "data": {
+        "webhookSubscriptionDelete": {
+            "userErrors": [],
+            "deletedWebhookSubscriptionId": "gid://shopify/WebhookSubscription/1"
+        }
+    }
+}

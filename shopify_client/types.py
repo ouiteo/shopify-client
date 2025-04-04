@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import Literal, NotRequired, TypedDict
 
 from graphql_query import Field, Fragment, InlineFragment
+from pydantic import HttpUrl
 
 FieldT = str | Field | InlineFragment | Fragment
 
@@ -156,6 +157,13 @@ class ShopifyWebhookTopic(StrEnum):
 
 
 class WebhookSubscriptionInput(TypedDict):
+    callbackUrl: HttpUrl
+    format: Literal["JSON"]
+    filter: NotRequired[str]
+    includeFields: NotRequired[list[str]]
+
+
+class EventBridgeWebhookSubscriptionInput(TypedDict):
     arn: str
     format: Literal["JSON"]
     filter: NotRequired[str]

@@ -1,0 +1,12 @@
+{
+    "data": {
+        "node": {
+            "id": "gid://shopify/AppSubscription/1234567890",
+            "name": "SILVER",
+            "status": "ACTIVE",
+            "createdAt": "2024-06-04T03:59:38Z",
+            "currentPeriodEnd": "2025-06-04T03:59:50Z",
+            "trialDays": 0
+        }
+    }
+}
