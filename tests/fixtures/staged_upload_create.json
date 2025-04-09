@@ -1,0 +1,18 @@
+{
+    "data": {
+        "stagedUploadsCreate": {
+            "userErrors": [],
+            "stagedTargets": [
+                {
+                    "url": "https://upload.com",
+                    "parameters": [
+                        {
+                            "name": "key",
+                            "value": "thing"
+                        }
+                    ]
+                }   
+            ]
+        }
+    }
+}

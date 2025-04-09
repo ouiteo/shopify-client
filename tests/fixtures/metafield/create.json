@@ -1,0 +1,14 @@
+{
+    "data": {
+        "metafieldDefinitionCreate": {
+            "createdDefinition": {
+                "id": "gid://shopify/MetafieldDefinition/1",
+                "name": "test_name",
+                "namespace": "test_namespace",
+                "key": "test_key",
+                "type": "single_line_text_field"
+            },
+            "userErrors": []
+        }
+    }
+}
