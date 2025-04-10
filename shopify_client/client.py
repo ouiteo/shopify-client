@@ -852,7 +852,6 @@ class ShopifyClient:
             mutations_upload_response = await client.post(mutations_upload_url, data=data, files=files)
 
         mutations_upload_response.raise_for_status()
-
         return str(mutations_upload_url + staged_upload_path)
 
     async def create_redirects_import(self, url: str) -> str:

@@ -1,0 +1,10 @@
+{
+    "data": {
+        "bulkOperationRunMutation": {
+            "bulkOperation": {
+                "id": "gid://shopify/BulkOperation/1"
+            },
+            "userErrors": []
+        }
+    }
+}
