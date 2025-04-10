@@ -168,3 +168,23 @@ class EventBridgeWebhookSubscriptionInput(TypedDict):
     format: Literal["JSON"]
     filter: NotRequired[str]
     includeFields: NotRequired[list[str]]
+
+
+class ShopifyResource(StrEnum):
+    COLLECTION_IMAGE = "COLLECTION_IMAGE"
+    URL_REDIRECT_IMPORT = "URL_REDIRECT_IMPORT"
+    ORDERS = "orders"
+    BULK_MUTATION_VARIABLES = "BULK_MUTATION_VARIABLES"
+
+
+class MimeType(StrEnum):
+    TEXT_CSV = "text/csv"
+    TEXT_JSONL = "text/jsonl"
+    IMAGE_JPEG = "image/jpeg"
+    IMAGE_JPG = "image/jpg"
+    IMAGE_PNG = "image/png"
+
+
+class HttpMethod(StrEnum):
+    PUT = "PUT"
+    POST = "POST"

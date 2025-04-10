@@ -1,4 +1,4 @@
-from graphql_query import Argument, Field, Operation, Query, Variable
+from graphql_query import Argument, Field, InlineFragment, Operation, Query, Variable
 
 from shopify_client.utils import format_query, wrap_edges
 
@@ -170,9 +170,9 @@ def test_webhook_subscription_create() -> None:
                             Field(
                                 name="endpoint",
                                 fields=[
-                                    Field(name="__typename"),
-                                    Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
+                                    InlineFragment(type="WebhookHttpEndpoint", fields=["callbackUrl"]),
                                 ],
+                                typename=True,
                             ),
                         ],
                     ),
@@ -231,10 +231,8 @@ def test_eventbridge_webhook_subscription_create() -> None:
                             Field(name="format"),
                             Field(
                                 name="endpoint",
-                                fields=[
-                                    Field(name="__typename"),
-                                    Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
-                                ],
+                                fields=[InlineFragment(type="WebhookEventBridgeEndpoint", fields=["arn"])],
+                                typename=True,
                             ),
                         ],
                     ),
@@ -354,14 +352,8 @@ def test_metafield_defination_create() -> None:
                 fields=[
                     Field(
                         name="userErrors",
-                        fields=[
-                            Field(name="code"),
-                            Field(name="message"),
-                            Field(name="field"),
-                            Field(name="__typename"),
-                        ],
-                    ),
-                    Field(name="__typename"),
+                        fields=[Field(name="code"), Field(name="message"), Field(name="field")],
+                    )
                 ],
             )
         ],
@@ -371,12 +363,10 @@ def test_metafield_defination_create() -> None:
     mutation MetafieldDefinitionCreateMutation($input: MetafieldDefinitionInput!) {
         metafieldDefinitionCreate(definition: $input) {
             userErrors {
-            code
-            message
-            field
-                __typename
+                code
+                message
+                field
             }
-            __typename
         }
     }
     """
@@ -440,7 +430,7 @@ def test_metafield_set() -> None:
                             Field(
                                 name="owner",
                                 fields=[
-                                    Field(name="... on Product", fields=[Field(name="id"), Field(name="tags")]),
+                                    InlineFragment(type="Product", fields=["id", "tags"]),
                                 ],
                             ),
                         ],

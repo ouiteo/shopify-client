@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jsonlines
-from graphql_query import Argument, Field, Operation, Query, Variable
+from graphql_query import Argument, Field, InlineFragment, Operation, Query, Variable
 from httpx import AsyncClient as AsyncHttpxClient
 from httpx import Response as HttpxResponse
 from httpx._types import RequestContent
@@ -23,7 +23,14 @@ from .exceptions import (
     ShopUnavailableException,
     ThrottledException,
 )
-from .types import EventBridgeWebhookSubscriptionInput, ShopifyWebhookTopic, WebhookSubscriptionInput
+from .types import (
+    EventBridgeWebhookSubscriptionInput,
+    HttpMethod,
+    MimeType,
+    ShopifyResource,
+    ShopifyWebhookTopic,
+    WebhookSubscriptionInput,
+)
 from .utils import get_error_codes, wrap_edges
 
 logger = logging.getLogger(__name__)
@@ -37,25 +44,6 @@ retry_on_status = [
 shop_unavailable_status = [
     HTTPStatus.PAYMENT_REQUIRED.value,
     HTTPStatus.NOT_FOUND.value,
-]
-
-
-ShopifyResource = Literal[
-    "COLLECTION_IMAGE",
-    "URL_REDIRECT_IMPORT",
-    "orders",
-]
-
-MimeType = Literal[
-    "text/csv",
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-]
-
-HttpMethod = Literal[
-    "PUT",
-    "POST",
 ]
 
 
@@ -148,10 +136,13 @@ class ShopifyClient:
         """
         json_data = {"query": query.render(), "variables": variables}
         response = await self.session.post(self.base_url, json=json_data)
+
         if response.status_code in retry_on_status:
             raise RetriableException(f"retrying http {response.status_code}")
+
         elif response.status_code in shop_unavailable_status:
             raise ShopUnavailableException(f"Shop not available : {self.base_url}")
+
         response.raise_for_status()
         data = cast(dict[str, Any], response.json())
 
@@ -376,10 +367,10 @@ class ShopifyClient:
         variables = {
             "input": [
                 {
-                    "resource": "BULK_MUTATION_VARIABLES",
-                    "filename": f"{filename}",
-                    "mimeType": "text/jsonl",
-                    "httpMethod": "POST",
+                    "resource": ShopifyResource.BULK_MUTATION_VARIABLES.value,
+                    "filename": filename,
+                    "mimeType": MimeType.TEXT_JSONL.value,
+                    "httpMethod": HttpMethod.POST.value,
                 }
             ]
         }
@@ -485,8 +476,8 @@ class ShopifyClient:
                             Field(
                                 name="endpoint",
                                 fields=[
-                                    Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
-                                    Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                    InlineFragment(type="WebhookHttpEndpoint", fields=["callbackUrl"]),
+                                    InlineFragment(type="WebhookEventBridgeEndpoint", fields=["arn"]),
                                 ],
                             ),
                         ]
@@ -520,9 +511,9 @@ class ShopifyClient:
                                 Field(
                                     name="endpoint",
                                     fields=[
-                                        Field(name="__typename"),
-                                        Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
+                                        InlineFragment(type="WebhookHttpEndpoint", fields=["callbackUrl"]),
                                     ],
+                                    typename=True,
                                 ),
                             ],
                         ),
@@ -571,9 +562,9 @@ class ShopifyClient:
                                 Field(
                                     name="endpoint",
                                     fields=[
-                                        Field(name="__typename"),
-                                        Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                        InlineFragment(type="WebhookEventBridgeEndpoint", fields=["arn"]),
                                     ],
+                                    typename=True,
                                 ),
                             ],
                         ),
@@ -685,10 +676,8 @@ class ShopifyClient:
                                 Field(name="code"),
                                 Field(name="message"),
                                 Field(name="field"),
-                                Field(name="__typename"),
                             ],
-                        ),
-                        Field(name="__typename"),
+                        )
                     ],
                 )
             ],
@@ -826,7 +815,12 @@ class ShopifyClient:
         )
         variables = {
             "input": [
-                {"resource": "URL_REDIRECT_IMPORT", "filename": filename, "mimeType": "text/csv", "httpMethod": "POST"}
+                {
+                    "resource": ShopifyResource.URL_REDIRECT_IMPORT.value,
+                    "filename": filename,
+                    "mimeType": MimeType.TEXT_CSV.value,
+                    "httpMethod": HttpMethod.POST.value,
+                }
             ]
         }
         stage_mutations_response = await self.graphql(query, variables)
