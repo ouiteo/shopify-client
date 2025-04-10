@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from graphql_query import Field, Operation, Query
+from pytest_httpx import HTTPXMock
 
 from shopify_client.client import ShopifyClient
 from shopify_client.exceptions import QueryError, ShopUnavailableException
@@ -234,15 +235,14 @@ async def test_check_subscription_status(mock_shopify_api: dict[str, dict[str, A
     assert response is True
 
 
-# TODO: Need to fix the test
-# async def test_update_redirect_csv(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
-#     mock_shopify_api["stagedUploadsCreate"] = json_fixture("staged_upload_create.json")
-#     mock_shopify_api["/upload"] = {}
-#     async with ShopifyClient("test-store", "access-token") as client:
-#         response = await client.upload_redirect_csv(
-#             [{"source_url": "https://example.com/1", "target_url": "https://example.com/2"}]
-#         )
-#     assert type(response) is str
+async def test_update_redirect_csv(httpx_mock: HTTPXMock, mock_shopify_api: dict[str, dict[str, Any]]) -> None:
+    mock_shopify_api["stagedUploadsCreate"] = json_fixture("staged_upload_create.json")
+    httpx_mock.add_response(method="POST", url="https://upload.com", json={})
+    async with ShopifyClient("test-store", "access-token") as client:
+        response = await client.upload_redirect_csv(
+            [{"source_url": "https://example.com/1", "target_url": "https://example.com/2"}]
+        )
+    assert type(response) is str
 
 
 async def test_create_redirects_import(mock_shopify_api: dict[str, dict[str, Any]]) -> None:
@@ -260,3 +260,30 @@ async def test_submit_redirects_import(mock_shopify_api: dict[str, dict[str, Any
     async with ShopifyClient("test-store", "access-token") as client:
         response = await client.submit_redirects_import("gid://shopify/UrlRedirectImport/1")
     assert response == json_fixture("redirect_import_submit.json")["data"]["urlRedirectImportSubmit"]["job"]
+
+
+async def test_get_permanent_token(httpx_mock: HTTPXMock) -> None:
+    token = "permanent-token"
+    scopes = "read_products,write_products"
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://test-store.myshopify.com/admin/oauth/access_token",
+        json={"access_token": token, "scope": scopes},
+    )
+    async with ShopifyClient("test-store", "access-token") as client:
+        response = await client.get_permanent_token("test-store", "code", "client_id", "client_secret")
+    assert response == (token, scopes)
+
+
+async def test_proxy_pass(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(method="POST", url="https://test-store.myshopify.com/admin/api/unstable/graphql.json")
+    async with ShopifyClient("test-store", "access-token") as client:
+        response = await client.proxy_pass(
+            "test-store",
+            "token",
+            "POST",
+            "https://test-store.myshopify.com/admin/api/unstable/graphql.json",
+            '{"query": "query { shop { name } }"}',
+        )
+        assert response.status_code == 200
