@@ -1,12 +1,18 @@
 import asyncio
+import csv
 import logging
+import uuid
 from http import HTTPStatus
+from io import BytesIO, StringIO
 from types import TracebackType
-from typing import Any, Optional, Self, Type, cast
+from typing import Any, Literal, Optional, Self, Type, cast
 from urllib.parse import urlencode
 
 import httpx
-from graphql_query import Argument, Field, Operation, Query, Variable
+import jsonlines
+from graphql_query import Argument, Field, InlineFragment, Operation, Query, Variable
+from httpx import AsyncClient as AsyncHttpxClient
+from httpx import Response as HttpxResponse
 from httpx._types import RequestContent
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
@@ -17,7 +23,14 @@ from .exceptions import (
     ShopUnavailableException,
     ThrottledException,
 )
-from .types import ShopifyWebhookTopic, WebhookSubscriptionInput
+from .types import (
+    EventBridgeWebhookSubscriptionInput,
+    HttpMethod,
+    MimeType,
+    ShopifyResource,
+    ShopifyWebhookTopic,
+    WebhookSubscriptionInput,
+)
 from .utils import get_error_codes, wrap_edges
 
 logger = logging.getLogger(__name__)
@@ -123,10 +136,13 @@ class ShopifyClient:
         """
         json_data = {"query": query.render(), "variables": variables}
         response = await self.session.post(self.base_url, json=json_data)
+
         if response.status_code in retry_on_status:
             raise RetriableException(f"retrying http {response.status_code}")
+
         elif response.status_code in shop_unavailable_status:
             raise ShopUnavailableException(f"Shop not available : {self.base_url}")
+
         response.raise_for_status()
         data = cast(dict[str, Any], response.json())
 
@@ -142,6 +158,7 @@ class ShopifyClient:
         self, query: Operation, variables: dict[str, Any] = {}, max_limit: int | None = None
     ) -> list[dict[str, Any]]:
         """
+        :child_entity: The child entity to extract. For example, pass "products" to extract from collections.products.
         Execute a GraphQL query with pagination.
         Returns a list of nodes from the response, handling both paginated and non-paginated responses.
         """
@@ -161,6 +178,9 @@ class ShopifyClient:
             # Find and process nodes from the response
             for value in data.values():
                 if isinstance(value, dict):
+                    # Parse child entity
+                    value = next((val for _, val in value.items() if "pageInfo" in val), value)
+
                     # Handle paginated response
                     if "edges" in value:
                         results.extend(edge["node"] for edge in value["edges"])
@@ -214,7 +234,7 @@ class ShopifyClient:
 
         return False
 
-    async def poll_until_complete(self, job_id: str, job_type: str) -> str | None:
+    async def poll_until_complete(self, job_id: str, job_type: str) -> HttpxResponse:
         """Poll the bulk operation until it is complete"""
         query = Operation(
             type="query",
@@ -252,13 +272,22 @@ class ShopifyClient:
             return await self.poll_until_complete(job_id, job_type)
 
         elif status == "COMPLETED":
-            return cast(str | None, current_bulk_operation["url"])
+            data_url = current_bulk_operation["url"]
+            if data_url:
+                async with AsyncHttpxClient() as client:
+                    download_response = await client.get(data_url)
+
+                download_response.raise_for_status()
+                return download_response
+
+            else:  # data url was None, it means job returned no data
+                return HttpxResponse(status_code=204, content=b"")
 
         raise ValueError(f"Job failed with status {status} [{bulk_check_response}]")
 
     async def run_bulk_operation_query(
         self, sub_query: Query, variables: dict[str, Any] = {}, wait: bool = True
-    ) -> str | None:
+    ) -> str | jsonlines.Reader:
         is_job_running = await self.is_bulk_job_running(job_type="QUERY")
         if is_job_running:
             raise BulkQueryInProgress("Bulk query job already running")
@@ -286,43 +315,151 @@ class ShopifyClient:
 
         job_id: str = response["data"]["bulkOperationRunQuery"]["bulkOperation"]["id"]
         if wait:
-            return await self.poll_until_complete(job_id, "QUERY")
+            http_response = await self.poll_until_complete(job_id, "QUERY")
+            reader = jsonlines.Reader(BytesIO(http_response.content))
+            return reader
 
         return job_id
 
     async def run_bulk_operation_mutation(
-        self, sub_query: Operation, variables: dict[str, Any] = {}, wait: bool = True
-    ) -> str | None:
-        is_job_running = await self.is_bulk_job_running(job_type="MUTATION")
-        if is_job_running:
-            raise ValueError("Bulk mutation job already running")
+        self, query: Operation, rows: list[dict[str, Any]], key: str | None = "input", wait: bool = True
+    ) -> str | jsonlines.Reader:
+        filename = f"{uuid.uuid4()}.jsonl"
+        stage_mutation_query = Operation(
+            type="mutation",
+            name="stagedUploadsCreate",
+            variables=[Variable(name="input", type="[StagedUploadInput!]!")],
+            queries=[
+                Query(
+                    name="stagedUploadsCreate",
+                    arguments=[
+                        Argument(
+                            name="input",
+                            value="$input",
+                        )
+                    ],
+                    fields=[
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        ),
+                        Field(
+                            name="stagedTargets",
+                            fields=[
+                                Field(name="url"),
+                                Field(name="resourceUrl"),
+                                Field(
+                                    name="parameters",
+                                    fields=[
+                                        Field(name="name"),
+                                        Field(name="value"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+        variables = {
+            "input": [
+                {
+                    "resource": ShopifyResource.BULK_MUTATION_VARIABLES.value,
+                    "filename": filename,
+                    "mimeType": MimeType.TEXT_JSONL.value,
+                    "httpMethod": HttpMethod.POST.value,
+                }
+            ]
+        }
 
-        query = Operation(
+        ###################
+        # Stage Mutations #
+        ###################
+        # Get the upload parameters for our mutation file
+        stage_mutations_response = await self.graphql(stage_mutation_query, variables)
+        if not stage_mutations_response.get("data"):
+            raise ValueError(stage_mutations_response["errors"])
+
+        stage_mutations_data = stage_mutations_response["data"]["stagedUploadsCreate"]["stagedTargets"][0]
+        mutations_upload_url = stage_mutations_data["url"]
+        mutations_upload_params = stage_mutations_data["parameters"]
+
+        ####################
+        # Upload Mutations #
+        ####################
+        if key is not None:
+            rows = [{key: row} for row in rows]
+        fp = BytesIO()
+        writer = jsonlines.Writer(fp)
+        writer.write_all(rows)
+        fp.seek(0)
+
+        files = {"file": (filename, fp, "application/octet-stream")}
+        data = {param["name"]: (param["value"],) for param in mutations_upload_params}
+        staged_upload_path = data["key"][0]
+
+        async with httpx.AsyncClient() as client:
+            mutations_upload_response = await client.post(mutations_upload_url, data=data, files=files)
+
+        mutations_upload_response.raise_for_status()
+
+        ######################
+        # Run Bulk Operation #
+        ######################
+
+        bulk_mutation_query = Operation(
             type="mutation",
             name="bulkOperationRunMutation",
             queries=[
                 Query(
                     name="bulkOperationRunMutation",
-                    arguments=[Argument(name="mutation", value=sub_query.render())],
+                    arguments=[
+                        Argument(name="mutation", value=f'"""{query}"""'),
+                        Argument(name="stagedUploadPath", value=staged_upload_path),
+                    ],
                     fields=[
-                        Field(name="bulkOperation", fields=[Field(name="id"), Field(name="status")]),
-                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
+                        Field(
+                            name="bulkOperation",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="url"),
+                                Field(name="status"),
+                            ],
+                        ),
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        ),
                     ],
                 )
             ],
         )
-        response = await self.graphql(query, variables)
+        response = await self.graphql(bulk_mutation_query)
+        if not response.get("data"):
+            raise ValueError(response["errors"])
 
         user_errors = response["data"]["bulkOperationRunMutation"]["userErrors"]
         if user_errors:
-            raise QueryError(user_errors)
+            raise ValueError(user_errors)
 
         job_id: str = response["data"]["bulkOperationRunMutation"]["bulkOperation"]["id"]
-        if wait:
-            return await self.poll_until_complete(job_id, "MUTATION")
 
-        return job_id
+        if not wait:
+            return job_id
 
+        http_response = await self.poll_until_complete(job_id, "MUTATION")
+        reader = jsonlines.Reader(BytesIO(http_response.content))
+        return reader
+
+    #########################
+    # Webhook Subscriptions #
+    #########################
     async def get_webhook_subscriptions(self) -> list[dict[str, Any]]:
         """Get all webhook subscriptions"""
         query = Operation(
@@ -339,8 +476,8 @@ class ShopifyClient:
                             Field(
                                 name="endpoint",
                                 fields=[
-                                    Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
-                                    Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                    InlineFragment(type="WebhookHttpEndpoint", fields=["callbackUrl"]),
+                                    InlineFragment(type="WebhookEventBridgeEndpoint", fields=["arn"]),
                                 ],
                             ),
                         ]
@@ -374,17 +511,13 @@ class ShopifyClient:
                                 Field(
                                     name="endpoint",
                                     fields=[
-                                        Field(name="__typename"),
-                                        Field(name="... on WebhookHttpEndpoint", fields=[Field(name="callbackUrl")]),
-                                        Field(name="... on WebhookEventBridgeEndpoint", fields=[Field(name="arn")]),
+                                        InlineFragment(type="WebhookHttpEndpoint", fields=["callbackUrl"]),
                                     ],
+                                    typename=True,
                                 ),
                             ],
                         ),
-                        Field(
-                            name="userErrors",
-                            fields=[Field(name="field"), Field(name="message")],
-                        ),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
                     ],
                 )
             ],
@@ -403,3 +536,397 @@ class ShopifyClient:
         user_errors = response["data"]["webhookSubscriptionCreate"]["userErrors"]
         if user_errors:
             raise QueryError(user_errors)
+
+    async def eventbridge_subscribe_to_topic(
+        self, topic: ShopifyWebhookTopic, subscription: EventBridgeWebhookSubscriptionInput
+    ) -> None:
+        """EventBridge webhook subscription topic"""
+        query = Operation(
+            type="mutation",
+            name="eventBridgeWebhookSubscriptionCreate",
+            queries=[
+                Query(
+                    name="eventBridgeWebhookSubscriptionCreate",
+                    arguments=[
+                        Argument(name="topic", value="$topic"),
+                        Argument(name="webhookSubscription", value="$webhookSubscription"),
+                    ],
+                    fields=[
+                        Field(
+                            name="webhookSubscription",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="topic"),
+                                Field(name="filter"),
+                                Field(name="format"),
+                                Field(
+                                    name="endpoint",
+                                    fields=[
+                                        InlineFragment(type="WebhookEventBridgeEndpoint", fields=["arn"]),
+                                    ],
+                                    typename=True,
+                                ),
+                            ],
+                        ),
+                        Field(name="userErrors", fields=[Field(name="field"), Field(name="message")]),
+                    ],
+                )
+            ],
+            variables=[
+                Variable(name="topic", type="WebhookSubscriptionTopic!"),
+                Variable(name="webhookSubscription", type="EventBridgeWebhookSubscriptionInput!"),
+            ],
+        )
+
+        response = await self.graphql(
+            query,
+            variables={
+                "topic": topic.value,
+                "webhookSubscription": subscription,
+            },
+        )
+
+        user_errors = response["data"]["eventBridgeWebhookSubscriptionCreate"]["userErrors"]
+        if user_errors:
+            raise QueryError(user_errors)
+
+    async def delete_webhook_subscription(self, subscription_id: str) -> None:
+        """Delete a webhook subscription"""
+        query = Operation(
+            type="mutation",
+            name="webhookSubscriptionDelete",
+            queries=[
+                Query(
+                    name="webhookSubscriptionDelete",
+                    arguments=[Argument(name="id", value="$id")],
+                    fields=[
+                        Field(name="deletedWebhookSubscriptionId"),
+                        Field(
+                            name="userErrors",
+                            fields=[Field(name="field"), Field(name="message")],
+                        ),
+                    ],
+                )
+            ],
+            variables=[Variable(name="id", type="ID!")],
+        )
+        response = await self.graphql(query, variables={"id": subscription_id})
+        user_errors = response["data"]["webhookSubscriptionDelete"]["userErrors"]
+        if user_errors:
+            raise QueryError(user_errors)
+
+    #########################
+    # Metafield Definitions #
+    #########################
+    async def get_metafield_definitions(
+        self,
+        owner_type: Literal["PRODUCT", "COLLECTION"] = "COLLECTION",
+        namespace: Optional[str] = None,
+        key: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        List metafield definitions for a given owner type, namespace, and key.
+        """
+        query = Operation(
+            type="query",
+            name="metafieldDefinitions",
+            queries=[
+                Query(
+                    name="metafieldDefinitions",
+                    arguments=[
+                        Argument(name="first", value=250),
+                        Argument(name="ownerType", value="$ownerType"),
+                        *([Argument(name="namespace", value="$namespace")] if namespace else []),
+                        *([Argument(name="key", value="$key")] if key else []),
+                    ],
+                    fields=wrap_edges([Field(name="id"), Field(name="name"), Field(name="namespace")]),
+                )
+            ],
+            variables=[
+                Variable(name="ownerType", type="MetafieldOwnerType!"),
+                *([Variable(name="namespace", type="String")] if namespace else []),
+                *([Variable(name="key", type="String")] if key else []),
+            ],
+        )
+
+        variables: dict[str, Any] = {"ownerType": owner_type}
+        if namespace:
+            variables["namespace"] = namespace
+        if key:
+            variables["key"] = key
+
+        response = await self.graphql(query, variables=variables)
+        return [edge["node"] for edge in response["data"]["metafieldDefinitions"]["edges"]]
+
+    async def create_metafield_definition(self, input: dict[str, Any]) -> dict[str, Any]:
+        """
+        Create metafield definition
+        """
+        query = Operation(
+            type="mutation",
+            name="metafieldDefinitionCreateMutation",
+            queries=[
+                Query(
+                    name="metafieldDefinitionCreate",
+                    arguments=[Argument(name="definition", value="$input")],
+                    fields=[
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="code"),
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        )
+                    ],
+                )
+            ],
+            variables=[Variable(name="input", type="MetafieldDefinitionInput!")],
+        )
+
+        response = await self.graphql(query, {"input": input})
+
+        user_errors = response.get("data", {}).get("metafieldDefinitionCreate", {}).get("userErrors")
+        if user_errors:
+            raise ValueError(f"Error creating metafield definition: {user_errors}")
+
+        return response
+
+    async def delete_metafield_definition(
+        self, definition_id: str, delete_associated_metafields: bool = True
+    ) -> dict[str, Any]:
+        """
+        Delete a metafield definition
+        """
+        query = Operation(
+            type="mutation",
+            name="deleteMetafieldDefinition",
+            queries=[
+                Query(
+                    name="metafieldDefinitionDelete",
+                    arguments=[
+                        Argument(name="id", value="$id"),
+                        Argument(name="deleteAllAssociatedMetafields", value="$deleteAllAssociatedMetafields"),
+                    ],
+                    fields=[
+                        Field(name="deletedDefinitionId"),
+                        Field(
+                            name="userErrors", fields=[Field(name="field"), Field(name="message"), Field(name="code")]
+                        ),
+                    ],
+                )
+            ],
+            variables=[
+                Variable(name="id", type="ID!"),
+                Variable(name="deleteAllAssociatedMetafields", type="Boolean!"),
+            ],
+        )
+
+        variables = {
+            "id": definition_id,
+            "deleteAllAssociatedMetafields": delete_associated_metafields,
+        }
+        response = await self.graphql(query, variables=variables)
+
+        user_errors = response["data"]["metafieldDefinitionDelete"]["userErrors"]
+        if user_errors:
+            raise ValueError(f"Error deleting metafield definition: {user_errors}")
+
+        return response
+
+    #########################
+    # Billing Subscription  #
+    #########################
+    async def check_subscription(self, id: str) -> bool:
+        """
+        Check if the subscription is active
+        """
+        query = Operation(
+            type="query",
+            name="checkAppSubscription",
+            queries=[
+                Query(
+                    name="node",
+                    arguments=[Argument(name="id", value="$id")],
+                    fields=[
+                        Field(
+                            name="... on AppSubscription",
+                            fields=[
+                                Field(name="id"),
+                                Field(name="status"),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+            variables=[Variable(name="id", type="ID!")],
+        )
+
+        variables = {"id": f"gid://shopify/AppSubscription/{id}"}
+        response = await self.graphql(query, variables)
+
+        node = response.get("data", {}).get("node", None)
+        if not node:
+            logger.error("Subscription not found")
+            return False
+
+        charge_active = node.get("status", "")
+        return bool(charge_active and charge_active == "ACTIVE")
+
+    async def upload_redirect_csv(self, rows: list[dict[str, Any]]) -> str:
+        filename = f"{uuid.uuid4()}.csv"
+        query = Operation(
+            type="mutation",
+            name="stagedUploadsCreate",
+            variables=[Variable(name="input", type="[StagedUploadInput!]!")],
+            queries=[
+                Query(
+                    name="stagedUploadsCreate",
+                    arguments=[
+                        Argument(
+                            name="input",
+                            value="",
+                        )
+                    ],
+                    fields=[
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        ),
+                        Field(
+                            name="stagedTargets",
+                            fields=[
+                                Field(name="url"),
+                                Field(
+                                    name="parameters",
+                                    fields=[
+                                        Field(name="name"),
+                                        Field(name="value"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+        variables = {
+            "input": [
+                {
+                    "resource": ShopifyResource.URL_REDIRECT_IMPORT.value,
+                    "filename": filename,
+                    "mimeType": MimeType.TEXT_CSV.value,
+                    "httpMethod": HttpMethod.POST.value,
+                }
+            ]
+        }
+        stage_mutations_response = await self.graphql(query, variables)
+
+        if not stage_mutations_response.get("data"):
+            raise ValueError(stage_mutations_response.get("errors"))
+
+        stage_mutations_data: dict[str, Any] = stage_mutations_response["data"]["stagedUploadsCreate"]["stagedTargets"][
+            0
+        ]
+        mutations_upload_url: str = stage_mutations_data["url"]
+        mutations_upload_params = stage_mutations_data["parameters"]
+
+        string_fp = StringIO()
+        writer = csv.writer(string_fp)
+
+        writer.writerow(["Redirect from", "Redirect to"])
+        for row in rows:
+            writer.writerow([row["source_url"], row["target_url"]])
+        csv_content = string_fp.getvalue()
+        fp = BytesIO(csv_content.encode("utf-8"))
+        fp.seek(0)
+
+        files = {"file": (filename, fp, "application/octet-stream")}
+        data = {param["name"]: (param["value"],) for param in mutations_upload_params}
+        staged_upload_path = data["key"][0]
+
+        async with httpx.AsyncClient() as client:
+            mutations_upload_response = await client.post(mutations_upload_url, data=data, files=files)
+
+        mutations_upload_response.raise_for_status()
+
+        return str(mutations_upload_url + staged_upload_path)
+
+    async def create_redirects_import(self, url: str) -> str:
+        query = query = Operation(
+            type="mutation",
+            name="urlRedirectImportCreate",
+            variables=[Variable(name="url", type="URL!")],
+            queries=[
+                Query(
+                    name="urlRedirectImportCreate",
+                    arguments=[
+                        Argument(
+                            name="url",
+                            value="$url",
+                        )
+                    ],
+                    fields=[
+                        Field(name="urlRedirectImport", fields=[Field(name="id")]),
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+        response = await self.graphql(query, variables={"url": url})
+        if not response.get("data"):
+            raise ValueError(response.get("errors"))
+
+        user_errors = response["data"]["urlRedirectImportCreate"]["userErrors"]
+        if user_errors:
+            raise ValueError(user_errors)
+
+        import_id: str = response["data"]["urlRedirectImportCreate"]["urlRedirectImport"]["id"]
+        return import_id
+
+    async def submit_redirects_import(self, import_id: str) -> dict[str, Any]:
+        query = Operation(
+            type="mutation",
+            name="RedirectImportSubmit",
+            variables=[Variable(name="id", type="ID!")],
+            queries=[
+                Query(
+                    name="urlRedirectImportSubmit",
+                    arguments=[
+                        Argument(
+                            name="id",
+                            value="$id",
+                        )
+                    ],
+                    fields=[
+                        Field(name="job", fields=[Field(name="id"), Field(name="done")]),
+                        Field(
+                            name="userErrors",
+                            fields=[
+                                Field(name="message"),
+                                Field(name="field"),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+        response = await self.graphql(query, {"id": import_id})
+        if not response.get("data"):
+            raise ValueError(response.get("errors"))
+
+        user_errors = response["data"]["urlRedirectImportSubmit"]["userErrors"]
+        if user_errors:
+            raise ValueError(user_errors)
+
+        job: dict[str, Any] = response["data"]["urlRedirectImportSubmit"]["job"]
+        return job

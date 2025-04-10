@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import Literal, NotRequired, TypedDict
 
 from graphql_query import Field, Fragment, InlineFragment
+from pydantic import HttpUrl
 
 FieldT = str | Field | InlineFragment | Fragment
 
@@ -156,7 +157,34 @@ class ShopifyWebhookTopic(StrEnum):
 
 
 class WebhookSubscriptionInput(TypedDict):
+    callbackUrl: HttpUrl
+    format: Literal["JSON"]
+    filter: NotRequired[str]
+    includeFields: NotRequired[list[str]]
+
+
+class EventBridgeWebhookSubscriptionInput(TypedDict):
     arn: str
     format: Literal["JSON"]
     filter: NotRequired[str]
     includeFields: NotRequired[list[str]]
+
+
+class ShopifyResource(StrEnum):
+    COLLECTION_IMAGE = "COLLECTION_IMAGE"
+    URL_REDIRECT_IMPORT = "URL_REDIRECT_IMPORT"
+    ORDERS = "orders"
+    BULK_MUTATION_VARIABLES = "BULK_MUTATION_VARIABLES"
+
+
+class MimeType(StrEnum):
+    TEXT_CSV = "text/csv"
+    TEXT_JSONL = "text/jsonl"
+    IMAGE_JPEG = "image/jpeg"
+    IMAGE_JPG = "image/jpg"
+    IMAGE_PNG = "image/png"
+
+
+class HttpMethod(StrEnum):
+    PUT = "PUT"
+    POST = "POST"
