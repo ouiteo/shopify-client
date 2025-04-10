@@ -46,6 +46,7 @@ ruff = "*"
 typer = "^0.15.2"
 rich = "^13.9.4"
 asyncer = "^0.0.5"
+pandas = "^2.2.3"
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ouiteo/shopify_client/issues"
