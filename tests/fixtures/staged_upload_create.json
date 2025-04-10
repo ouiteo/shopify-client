@@ -4,7 +4,7 @@
             "userErrors": [],
             "stagedTargets": [
                 {
-                    "url": "https://upload.com",
+                    "url": "https://upload.com/",
                     "parameters": [
                         {
                             "name": "key",

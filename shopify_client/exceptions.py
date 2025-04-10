@@ -16,3 +16,7 @@ class ThrottledException(RetriableException):
 
 class ShopUnavailableException(Exception):
     pass
+
+
+class InternalServerErrorException(RetriableException):
+    pass

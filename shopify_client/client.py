@@ -18,6 +18,7 @@ from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .exceptions import (
     BulkQueryInProgress,
+    InternalServerErrorException,
     QueryError,
     RetriableException,
     ShopUnavailableException,
@@ -150,7 +151,10 @@ class ShopifyClient:
         if error_codes:
             if "THROTTLED" in error_codes:
                 raise ThrottledException(data.get("errors") or data.get("error"))
-            raise QueryError(data.get("errors") or data.get("error"))
+            elif "INTERNAL_SERVER_ERROR" in error_codes:
+                raise InternalServerErrorException(data.get("errors") or data.get("error"))
+            else:
+                raise QueryError(data.get("errors") or data.get("error"))
 
         return data
 
@@ -852,7 +856,6 @@ class ShopifyClient:
             mutations_upload_response = await client.post(mutations_upload_url, data=data, files=files)
 
         mutations_upload_response.raise_for_status()
-
         return str(mutations_upload_url + staged_upload_path)
 
     async def create_redirects_import(self, url: str) -> str:
