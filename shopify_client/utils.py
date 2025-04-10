@@ -1,7 +1,9 @@
 from collections import defaultdict
 from typing import Any, Optional
 
-from graphql_query import Argument, Field, Fragment, InlineFragment, Operation, Query
+from graphql_query import Argument, Field, Operation, Query
+
+from .types import FieldsT
 
 Row = dict[str, Any]
 
@@ -38,7 +40,7 @@ def create_paginated_query(
                 ],
                 fields=[
                     *wrap_edges([Field(name=field) for field in fields]),
-                    Field(name="pageInfo", fields=["hasNextPage", "endCursor"]),
+                    Field(name="pageInfo", fields=[Field(name="hasNextPage"), Field(name="endCursor")]),
                 ],
             )
         ],
@@ -52,14 +54,12 @@ def format_query(query: str) -> str:
     return " ".join([x.strip() for x in query.split("\n")]).strip().replace("( ", "(").replace(" )", ")")
 
 
-def wrap_edges(fields: list[str | Field | InlineFragment | Fragment]) -> list[str | Field | InlineFragment | Fragment]:
+def wrap_edges(fields: FieldsT) -> FieldsT:
     """Helper function to wrap fields in edges/node structure for connections"""
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 
 
-def add_to_edges(
-    fields: list[str | Field | InlineFragment | Fragment],
-) -> list[str | Field | InlineFragment | Fragment]:
+def add_to_edges(fields: FieldsT) -> FieldsT:
     """Helper function to add to edges/node structure for connections"""
     return [Field(name="edges", fields=[Field(name="node", fields=fields)])]
 

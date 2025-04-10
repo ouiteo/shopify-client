@@ -5,6 +5,7 @@ from graphql_query import Field, Fragment, InlineFragment
 from pydantic import HttpUrl
 
 FieldT = str | Field | InlineFragment | Fragment
+FieldsT = list[FieldT]
 
 
 class ShopifyWebhookTopic(StrEnum):
